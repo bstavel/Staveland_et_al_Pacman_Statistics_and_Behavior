@@ -1,23 +1,48 @@
 # Pacman Behavioral Analyses
 
-Analysis scripts (mostly in R) for the analysis of the pacman dataset. While [pacman_ieeg](https://github.com/bstavel/pacman_ieeg) has the python scripts for analyses that are (nearly) only brain data, these analyses include both pure behavioral analyses and both brain/behavior analyses.
+## Overview
 
-## Pilot data behavior and validation
+Analysis scripts (mostly in R) for the behavior and statistical analysis of the PacMan project. While [Staveland_et_al_Pacman_Neural_Analyses]([https://github.com/bstavel/pacman_ieeg](https://github.com/bstavel/Staveland_et_al_Pacman_Neural_Analyses)) has the python scripts for analyses that are (nearly) only brain data, these analyses include both pure behavioral analyses and both brain/behavior models.
 
-Basic analyses showing normative behavior in the pilot sample and validation that the timing and online task works as expected. See `normative behavior` files and `analysis/task_validation_sanity_checks/`
+## Repository Structure
 
-## Joint Modeling of Longitudinal and Survival Data
+### anatomical_plotting
 
-Method to dynamically predict avoidance behavior in the pacman data using continuous predictors-- including possible brain measures. See `analysis/survival/README.md` for details
 
-## Frequency Encoding Analyses
+### attack
 
-Uses task behavior to predict neural responses via linear mixed effects models. See `analysis/frequency_analyses/README.md` for details
 
-## Connectivity Analyses
+### behavior
 
-Implements trial-by-trial theta correlations between different electrode pairs and compares to a null distribution. See `analysis/connectivity/README.md` for details
 
-## Clinical Analyses
+### cleaning_ieeg_behavior
 
-Analyses the prolific clinical sample recruited in Fall 2023. See `analysis/clinical/README.md` for details
+
+### clinical
+
+
+### coherence
+
+
+### cross_correlations
+
+
+### freq_power_analyses
+
+
+### granger
+
+
+### turnaround_time_correlations
+
+
+## Installation
+
+### Requirements
+
+### Key Dependencies
+
+## Data Flow
+
+
+### 
