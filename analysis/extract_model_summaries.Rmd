@@ -1,0 +1,370 @@
+---
+title: "Bayes Factors for Rising/Falling Coherence"
+output: html_document
+date: "2025-08-14"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 8,  # set default width of figures
+  fig.height = 5,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lme4)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(effectsize)
+library(scales)
+library(JMbayes2)
+library(caret)
+library(rmarkdown)
+library(blme)
+library(brms)
+library(bayesplot)
+library(posterior)
+library(bayestestR)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", "clean_behavioral_data.R"))
+source(path(here(), "R", "create_distance_df.R"))
+source(path(here(), "R", "joint_modeling_functions.R"))
+source(path(here(), "R", "jm_visualization_functions.R"))
+source(path(here(), "R", "connectivity_prep_functions.R"))
+source(path(here(), "R", "bayesian_helpers.R"))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# # ## parallelization ##
+# nCores <- 8
+# registerDoParallel(nCores)
+
+
+```
+
+
+
+```{r load-data}
+
+# Behavior Model
+load(path(here(), "results", "behave_turn_distance_reward_model.RData"))
+
+# Theta Power App/Avd - No Conflict
+load(path(here(), "results", "app_avd_hc_conflictfree_theta_model_brms.RData"))
+hc_cf_model <- hc_model
+load(path(here(), "results", "app_avd_amyg_conflictfree_theta_model_brms.RData"))
+amyg_cf_model <- amyg_model
+load(path(here(), "results", "app_avd_acc_conflictfree_theta_model_brms.RData"))
+acc_cf_model <- acc_model
+load(path(here(), "results", "app_avd_ofc_conflictfree_theta_model_brms.RData"))
+ofc_cf_model <- ofc_model
+load(path(here(), "results", "app_avd_mfg_conflictfree_theta_model_brms.RData"))
+mfg_cf_model <- mfg_model
+
+# Theta Power App/Avd - Conflict
+load(path(here(), "results", "app_avd_hc_theta_model_noattack_brms.RData"))
+load(path(here(), "results", "app_avd_amyg_theta_model_noattack_brms.RData"))
+load(path(here(), "results", "app_avd_acc_theta_model_noattack_brms.RData"))
+load(path(here(), "results", "app_avd_ofc_theta_model_noattack_brms.RData"))
+load(path(here(), "results", "app_avd_mfg_theta_model_noattack_brms.RData"))
+
+
+## rising
+load(path(here(), "results", "rising_falling_coherence", "2_rising_model_brms.RData"))
+
+## falling
+load(path(here(), "results", "rising_falling_coherence", "2_falling_model_brms.RData"))
+
+## Theta ~ Turnaround Time
+# load
+load(path(here(), "results", "full_all_roi_model_brms_newsubs_noinsula.RData"))
+theta_model <- model
+
+## HFA ~ Turnaround Time
+# load
+load(path(here(), "results", "full_hfa_all_roi_model_brms_newsubs.RData"))
+hfa_model <- model
+
+## Right MFG ~ Time *Strike/Chase
+load(path(here(), "results", "attack_mfg_lr_hfa_model_brms.RData"))
+load(path(here(), "results", "attack_mfg_hfa_trial_time_model_brms.RData"))
+
+```
+
+```{r behave}
+
+# behave model
+turn_reward_results <- pull_bayesian_model_summaries(behave_model, "b_large_rewardSmall")
+tmp <- summary(turn_reward_results)
+View(tmp$random$subject)
+View(tmp$fixed)
+View(tmp$spec_pars)
+
+```
+
+```{r theta-elevated-app}
+
+# increase in approach vs avoid
+hc_theta_results <- pull_bayesian_model_summaries(hc_model, "b_aacAvd.")
+tmp <- summary(hc_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+hc_theta_results_te <- get_subject_elec_te(hc_model, "aacAvd.", "elec_id")
+table(hc_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(hc_theta_results_te$electrode)
+
+amyg_theta_results <- pull_bayesian_model_summaries(amyg_model, "b_aacAvd.")
+tmp <- summary(amyg_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+amyg_theta_results_te <- get_subject_elec_te(amyg_model, "aacAvd.", "elec_id")
+table(amyg_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(amyg_theta_results_te$electrode)
+
+acc_theta_results <- pull_bayesian_model_summaries(acc_model, "b_aacAvd.")
+tmp <- summary(acc_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+acc_theta_results_te <- get_subject_elec_te(acc_model, "aacAvd.", "elec_id")
+table(acc_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(acc_theta_results_te$electrode)
+
+ofc_theta_results <- pull_bayesian_model_summaries(ofc_model, "b_aacAvd.")
+tmp <- summary(ofc_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+ofc_theta_results_te <- get_subject_elec_te(ofc_model, "aacAvd.", "elec_id")
+table(ofc_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(ofc_theta_results_te$electrode)
+
+mfg_theta_results <- pull_bayesian_model_summaries(mfg_model, "b_aacAvd.")
+tmp <- summary(mfg_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+mfg_theta_results_te <- get_subject_elec_te(mfg_model, "aacAvd.", "elec_id")
+table(mfg_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(mfg_theta_results_te$electrode)
+
+```
+
+
+```{r theta-elevated-app}
+
+# increase in approach vs avoid
+hc_cf_theta_results <- pull_bayesian_model_summaries(hc_cf_model, "b_aacAvd.")
+tmp <- summary(hc_cf_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+hc_cf_theta_results_te <- get_subject_elec_te(hc_cf_model, "aacAvd.", "elec_id")
+table(hc_cf_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(hc_cf_theta_results_te$electrode)
+
+amyg_cf_theta_results <- pull_bayesian_model_summaries(amyg_cf_model, "b_aacAvd.")
+tmp <- summary(amyg_cf_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+amyg_cf_theta_results_te <- get_subject_elec_te(amyg_cf_model, "aacAvd.", "elec_id")
+table(amyg_cf_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(amyg_cf_theta_results_te$electrode)
+
+acc_cf_theta_results <- pull_bayesian_model_summaries(acc_cf_model, "b_aacAvd.")
+tmp <- summary(acc_cf_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+acc_cf_theta_results_te <- get_subject_elec_te(acc_cf_model, "aacAvd.", "elec_id")
+table(acc_cf_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(acc_cf_theta_results_te$electrode)
+
+ofc_cf_theta_results <- pull_bayesian_model_summaries(ofc_cf_model, "b_aacAvd.")
+tmp <- summary(ofc_cf_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+ofc_cf_theta_results_te <- get_subject_elec_te(ofc_cf_model, "aacAvd.", "elec_id")
+table(ofc_cf_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(ofc_cf_theta_results_te$electrode)
+
+mfg_cf_theta_results <- pull_bayesian_model_summaries(mfg_cf_model, "b_aacAvd.")
+tmp <- summary(mfg_cf_model)
+View(tmp$random$subject)
+View(tmp$random$`subject:elec_id`)
+View(tmp$fixed)
+View(tmp$spec_pars)
+mfg_cf_theta_results_te <- get_subject_elec_te(mfg_cf_model, "aacAvd.", "elec_id")
+table(mfg_cf_theta_results_te$electrode$Pplus_ele <= 0.05)
+nrow(mfg_cf_theta_results_te$electrode)
+
+```
+
+```{r rise-fall}
+
+# rising and falling
+rising_results <- pull_bayesian_model_summaries(rising_model, "b_time")
+falling_results <- pull_bayesian_model_summaries(falling_model, "b_time")
+
+
+# get random effects - rising
+rising_electrode_te <- get_subject_elec_te(rising_model, "time", "key")
+table(rising_electrode_te$subject$Pplus_sub >= 0.95)/nrow(rising_electrode_te$subject)
+table(rising_electrode_te$subject$Pplus_sub >= 0.9)/nrow(rising_electrode_te$subject)
+table(rising_electrode_te$electrode$Pplus_ele >= 0.95)
+table(rising_electrode_te$electrode$Pplus_ele >= 0.90)/nrow(rising_electrode_te$electrode)
+
+# get random effects - falling
+falling_electrode_te <- get_subject_elec_te(falling_model, "time", "key")
+table(falling_electrode_te$subject$Pplus_sub <= 0.05)/nrow(falling_electrode_te$subject)
+table(falling_electrode_te$subject$Pplus_sub <= 0.1)/nrow(falling_electrode_te$subject)
+table(falling_electrode_te$electrode$Pplus_ele <= 0.05)
+table(falling_electrode_te$electrode$Pplus_ele <= 0.1)/nrow(falling_electrode_te$electrode)
+
+```
+
+```{r}
+
+# load data
+load(file = path(here(), "results", "imcoh_app_amyg_second_roi_model.RData"))
+load(file = path(here(), "results", "imcoh_app_ofc_second_roi_model.RData"))
+load(file = path(here(), "results", "imcoh_app_hc_second_roi_model.RData"))
+load(file = path(here(), "results", "imcoh_app_acc_second_roi_model.RData"))
+load(file = path(here(), "results", "imcoh_app_mfg_second_roi_model.RData"))
+
+summary(acc_model)
+
+```
+
+
+```{r}
+
+## calculate regional differences
+amyg_coherence_results <- extract_model_summaries_factor_analysis(amyg_model,  c('MFG', 'OFC', 'Ant.Cingulate', 'Hippocampus'))
+hc_coherence_results <- extract_model_summaries_factor_analysis(hc_model,  c('MFG', "Amygdala", 'OFC', 'Ant.Cingulate'))
+ofc_coherence_results <- extract_model_summaries_factor_analysis(ofc_model,  c('MFG', "Amygdala", 'Ant.Cingulate', 'Hippocampus'))
+acc_coherence_results <- extract_model_summaries_factor_analysis(acc_model,  c('MFG', "Amygdala", 'OFC',  'Hippocampus'))
+mfg_coherence_results <- extract_model_summaries_factor_analysis(mfg_model,  c('OFC', "Amygdala", 'Ant.Cingulate', 'Hippocampus'))
+
+```
+```{r attack-results}
+
+# summary 
+summary(mfg_lr_model)
+
+# model results
+mfg_lr_result <- pull_bayesian_model_summaries(mfg_lr_model, "b_attackPreMAttack:left_rightRight")
+
+# BF is not quite right in the context of the interaction, instead we want:
+draws <- as_draws_df(mfg_lr_model)
+post_contrast <- draws[["b_attackPreMAttack"]] +
+                 draws[["b_attackPreMAttack:left_rightRight"]]
+
+# Prior SD for the contrast when each coef ~ Normal(0, 2), independent:
+sd_contrast <- 2 * sqrt(2)
+bf <- bayestestR::bayesfactor_parameters(
+  posterior = post_contrast,
+  prior     = bayestestR::distribution_normal(n = 50000, mean = 0, sd = sd_contrast),
+  null      = 0
+)
+mfg_lr_result$BF10 <- exp(bf$log_BF)
+
+```
+
+```{r synchrony-results}
+
+theta_synchrony_result <- pull_bayesian_model_summaries(theta_model, "b_scale_logged_times")
+
+hfa_synchrony_result <- pull_bayesian_model_summaries(hfa_model, "b_scale_logged_times")
+
+```
+
+
+```{r attack-results}
+
+# summary 
+summary(attack_died_hfa_model)
+
+# model results
+attack_died_time_result <- pull_bayesian_model_summaries(attack_died_hfa_model, "b_diedchase:end_time")
+attack_died_result <- pull_bayesian_model_summaries(attack_died_hfa_model, "b_diedchase")
+
+# BF is not quite right in the context of the interaction, instead we want:
+draws <- as_draws_df(attack_died_hfa_model)
+post_contrast <- draws[["b_diedchase"]] +
+                 draws[["b_diedchase:end_time"]]
+
+# Prior SD for the contrast when each coef ~ Normal(0, 2), independent:
+sd_contrast <- 2 * sqrt(2)
+bf <- bayestestR::bayesfactor_parameters(
+  posterior = post_contrast,
+  prior     = bayestestR::distribution_normal(n = 50000, mean = 0, sd = sd_contrast),
+  null      = 0
+)
+attack_died_time_result$BF10 <- exp(bf$log_BF)
+
+attack_died_time_result_te <- get_subject_elec_te(attack_died_hfa_model, "end_time", "elec_id")
+table(amyg_cf_theta_results_te$electrode$Pplus_ele <= 0.05)
+
+```
+
+

@@ -1,0 +1,211 @@
+---
+title: "Comparing Electrode Groups on Turnaround Effect"
+output: html_document
+date: "2025-07-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 8,  # set default width of figures
+  fig.height = 5,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lme4)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(effectsize)
+library(scales)
+library(JMbayes2)
+library(caret)
+library(rmarkdown)
+library(blme)
+library(brms)
+library(bayesplot)
+library(posterior)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", "clean_behavioral_data.R"))
+source(path(here(), "R", "create_distance_df.R"))
+source(path(here(), "R", "joint_modeling_functions.R"))
+source(path(here(), "R", "jm_visualization_functions.R"))
+source(path(here(), "R", "connectivity_prep_functions.R"))
+source(path(here(), "R", "bayesian_helpers.R"))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# # ## parallelization ##
+# nCores <- 8
+# registerDoParallel(nCores)
+
+
+```
+
+
+# Theta Thresholding ~ Rising and Falling Coherence
+
+This supplemental analysis tests for how restricting or expanding the theta coherence thresholds changes the effect of time on theta coherence in approach and avoidance windows. 
+
+The time ~ theta coherence analyses were rerun with different thresholding: no thresholding ('All Pairs'), 100ms of elevated theta coherence during approach, 500ms of elevated theta coherence, and 1000ms of elevated theta coherence.
+
+This scripts loads the results of the models and plots the slopes of the effect for each electrode group. 
+
+Inputs:
+* `./high_performance_cluster_batch_scripts/compute_alternate_brms_approach_coherence_time.R` 
+* `./high_performance_cluster_batch_scripts/compute_alternate_brms_avoid_coherence_time.R`
+* `./create_sig_theta_coherence_csv.Rmd`
+
+Outputs:
+* `rising_threshold_plot.png` in `figures/connectivity`
+* `falling_threshold_plot.png` in `figures/connectivity`
+
+Those files are combined to create Supplemental Figure 7
+
+
+```{r load-data}
+
+## rising
+load(path(here(), "results", "rising_falling_coherence", "2_rising_model_all_elecs_brms.RData"))
+rising_all_model <- summary(rising_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_rising_model_brms.RData"))
+rising_orig_model <- summary(rising_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_rising_model_50_elecs_brms.RData"))
+rising_50_model <- summary(rising_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_rising_model_100_elecs_brms.RData"))
+rising_100_model <- summary(rising_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_rising_model_10a_elecs_brms.RData"))
+rising_10a_model <- summary(rising_model)$fixed
+
+## falling
+load(path(here(), "results", "rising_falling_coherence", "2_falling_model_all_elecs_brms.RData"))
+falling_all_model <- summary(falling_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_falling_model_brms.RData"))
+falling_orig_model <- summary(falling_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_falling_model_50_elecs_brms.RData"))
+falling_50_model <- summary(falling_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_falling_model_100_elecs_brms.RData"))
+falling_100_model <- summary(falling_model)$fixed
+load(path(here(), "results", "rising_falling_coherence", "2_falling_model_10a_elecs_brms.RData"))
+falling_10a_model <- summary(falling_model)$fixed
+
+## bind
+all_slopes_summary_df <- bind_rows(
+  rising_all_model %>% mutate(electrode_group = "all", case = "rising"),
+  rising_orig_model %>% mutate(electrode_group = "orig", case = "rising"),
+  rising_50_model %>% mutate(electrode_group = "50", case = "rising"),
+  rising_100_model %>% mutate(electrode_group = "100",  case = "rising"),
+  rising_10a_model %>% mutate(electrode_group = "10a",  case = "rising"),
+  falling_all_model %>% mutate(electrode_group = "all", case = "falling"),
+  falling_orig_model %>% mutate(electrode_group = "orig", case = "falling"),
+  falling_50_model %>% mutate(electrode_group = "50", case = "falling"),
+  falling_100_model %>% mutate(electrode_group = "100",  case = "falling"),
+  falling_10a_model %>% mutate(electrode_group = "10a",  case = "falling")
+) %>%
+  filter(grepl("time", rownames(.)))
+```
+
+
+```{r, fig.width = 5, fig.height = 2.5}
+
+rising_threshold_plot <- all_slopes_summary_df %>%
+  mutate(electrode_group = factor(electrode_group, levels = c("all", "orig", "10a", "50", "100"),
+                                  labels = c("All Pairs", "100ms", "100ms (App.)", "500ms", "1000ms"))) %>%
+  arrange(desc(electrode_group), Estimate) %>%
+  filter(case == "rising") %>%
+  ggplot(., aes(x = electrode_group, y = Estimate)) +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_errorbar(aes(ymin = `l-95% CI`, ymax = `u-95% CI`), color = "#c2383a", width = .1, size = 1) +
+  geom_point(size = 1, color = "#c2383a") +
+  theme(panel.background = element_rect(fill = "white"),
+        axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+        axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+        legend.title = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        plot.title = element_text(family = "Gill Sans", color = "#2D2327", face = 'bold', size = 9)) +
+  xlab("Threshold Group") + ylab("Beta Estimate (Size of the Effect)") +
+  ggtitle("Theta coherence rises during approach")
+
+rising_threshold_plot
+
+```
+
+```{r, fig.width = 5, fig.height = 2.5}
+
+falling_threshold_plot <- all_slopes_summary_df %>%
+  mutate(electrode_group = factor(electrode_group, levels = c("all", "orig", "10a", "50", "100"),
+                                  labels = c("All Pairs", "100ms", "100ms (App.)", "500ms", "1000ms"))) %>%
+  arrange(desc(electrode_group), Estimate) %>%
+  filter(case == "falling") %>%
+  ggplot(., aes(x = electrode_group, y = Estimate)) +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_errorbar(aes(ymin = `l-95% CI`, ymax = `u-95% CI`), color = "#2c75b3", width = .1, size = 1) +
+  geom_point(size = 2, color = "#2c75b3") +
+  theme(panel.background = element_rect(fill = "white"),
+        axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+        axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+        legend.title = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        plot.title = element_text(family = "Gill Sans", color = "#2D2327", face = 'bold', size = 9)) +
+  xlab("Threshold Group") + ylab("Beta Estimate (Size of the Effect)") +
+  ggtitle("Theta coherence falls during avoidance")
+falling_threshold_plot
+
+```
+
+
+```{r}
+
+ggsave(path(here(), "figures", "connectivity", "rising_threshold_plot.png"), plot = rising_threshold_plot, width = 5, height = 2.5, dpi = 300)
+ggsave(path(here(), "figures", "connectivity", "falling_threshold_plot.png"), plot = falling_threshold_plot, width = 5, height = 2.5, dpi = 300)
+
+
+
+
+```
+
+

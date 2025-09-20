@@ -1,0 +1,287 @@
+---
+title: "Rising Falling Supplementary Tables"
+output: html_document
+date: "2024-12-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 8,  # set default width of figures
+  fig.height = 5,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lme4)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(effectsize)
+library(scales)
+library(JMbayes2)
+library(caret)
+library(rmarkdown)
+library(blme)
+library(brms)
+library(bayesplot)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", "clean_behavioral_data.R"))
+source(path(here(), "R", "create_distance_df.R"))
+source(path(here(), "R", "joint_modeling_functions.R"))
+source(path(here(), "R", "jm_visualization_functions.R"))
+source(path(here(), "R", "connectivity_prep_functions.R"))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# # ## parallelization ##
+# nCores <- 8
+# registerDoParallel(nCores)
+
+
+```
+
+# Create Supplementary Tables For Coherence ~ Time Analyses
+
+Inputs:
+* `1.5_rising_model_brms.RData` in the `results/` folder
+* `1.6_rising_model_brms.RData` in the `results/` folder
+* `1.7_rising_model_brms.RData` in the `results/` folder
+* `1.8_rising_model_brms.RData` in the `results/` folder
+* `2_rising_model_brms.RData` in the `results/` folder
+* `1.5_falling_model_brms.RData` in the `results/` folder
+* `1.6_falling_model_brms.RData` in the `results/` folder
+* `1.7_falling_model_brms.RData` in the `results/` folder
+* `1.8_falling_model_brms.RData` in the `results/` folder
+* `2_falling_model_brms.RData` in the `results/` folder
+* `2_rising_model_pli_brms.RData` in the `results/` folder
+* `2_falling_model_pli_brms.RData` in the `results/` folder
+* `2_rising_model_ppc_brms.RData` in the `results/` folder
+* `2_falling_model_ppc_brms.RData` in the `results/` folder
+
+Outputs:
+* Supplemental Table 5
+
+
+```{r load-model}
+
+# load rising models #
+load(path(here(), "results", "1.5_rising_model_brms.RData"))
+rising_model_15 <- rising_model
+rising_summ_15 <- summary(rising_model)
+rising_summ_15 <- round(rising_summ_15$fixed[2, ], 2) %>% mutate(Timepoint = "1.5 (s)")
+load(path(here(), "results", "1.6_rising_model_brms.RData"))
+rising_model_16 <- rising_model
+rising_summ_16 <-  summary(rising_model)
+rising_summ_16 <- round(rising_summ_16$fixed[2, ], 2) %>% mutate(Timepoint = "1.6 (s)")
+load(path(here(), "results", "1.7_rising_model_brms.RData"))
+rising_model_17 <- rising_model
+rising_summ_17 <-  summary(rising_model)
+rising_summ_17 <- round(rising_summ_17$fixed[2, ], 2) %>% mutate(Timepoint = "1.7 (s)")
+load(path(here(), "results", "1.8_rising_model_brms.RData"))
+rising_model_18 <- rising_model
+rising_summ_18 <-  summary(rising_model)
+rising_summ_18 <- round(rising_summ_18$fixed[2, ], 2) %>% mutate(Timepoint = "1.8 (s)")
+load(path(here(), "results", "2_rising_model_brms.RData"))
+rising_model_2 <- rising_model
+rising_summ_2 <-  summary(rising_model)
+rising_summ_2 <- round(rising_summ_2$fixed[2, ], 2) %>% mutate(Timepoint = "2 (s)")
+
+# load falling models #
+load(path(here(), "results", "1.5_falling_model_brms.RData"))
+falling_model_15 <- falling_model
+falling_summ_15 <- summary(falling_model)
+falling_summ_15 <- round(falling_summ_15$fixed[2, ], 2) %>% mutate(Timepoint = "1.5 (s)")
+load(path(here(), "results", "1.6_falling_model_brms.RData"))
+falling_model_16 <- falling_model
+falling_summ_16 <-  summary(falling_model)
+falling_summ_16 <- round(falling_summ_16$fixed[2, ], 2) %>% mutate(Timepoint = "1.6 (s)")
+load(path(here(), "results", "1.7_falling_model_brms.RData"))
+falling_model_17 <- falling_model
+falling_summ_17 <-  summary(falling_model)
+falling_summ_17 <- round(falling_summ_17$fixed[2, ], 2) %>% mutate(Timepoint = "1.7 (s)")
+load(path(here(), "results", "1.8_falling_model_brms.RData"))
+falling_model_18 <- falling_model
+falling_summ_18 <-  summary(falling_model)
+falling_summ_18 <- round(falling_summ_18$fixed[2, ], 2) %>% mutate(Timepoint = "1.8 (s)")
+load(path(here(), "results", "2_falling_model_brms.RData"))
+falling_model_2 <- falling_model
+falling_summ_2 <-  summary(falling_model)
+falling_summ_2 <- round(falling_summ_2$fixed[2, ], 2) %>% mutate(Timepoint = "2 (s)")
+
+# load ppc models
+load(path(here(), "results", "2_rising_model_ppc_brms.RData"))
+rising_model_ppc_2 <- falling_model
+rising_summ_ppc_2 <-  summary(rising_model)
+rising_summ_ppc_2 <- round(rising_summ_ppc_2$fixed[2, ], 2) %>% mutate(Timepoint = "2 (s)")
+load(path(here(), "results", "2_falling_model_ppc_brms.RData"))
+falling_model_ppc_2 <- falling_model
+falling_summ_ppc_2 <-  summary(falling_model)
+falling_summ_ppc_2 <- round(falling_summ_ppc_2$fixed[2, ], 2) %>% mutate(Timepoint = "2 (s)")
+
+# load pli models
+load(path(here(), "results", "2_rising_model_pli_brms.RData"))
+rising_model_pli_2 <- falling_model
+rising_summ_pli_2 <-  summary(rising_model)
+rising_summ_pli_2 <- round(rising_summ_pli_2$fixed[2, ], 2) %>% mutate(Timepoint = "2 (s)")
+load(path(here(), "results", "2_falling_model_pli_brms.RData"))
+falling_model_pli_2 <- falling_model
+falling_summ_pli_2 <-  summary(falling_model)
+falling_summ_pli_2 <- round(falling_summ_pli_2$fixed[2, ], 2) %>% mutate(Timepoint = "2 (s)")
+
+
+```
+
+```{r}
+
+create_posterior_pred_df <- function(model){
+
+  # create posterior check
+  y_true <- model$data$scaled_log_connectivity
+  y_rep <- posterior_predict(model, ndraws = 100)
+  
+  # Compute observed statistics
+  mean_obs <- mean(y_true)
+  sd_obs <- sd(y_true)
+  
+  # Compute replicated statistics
+  mean_rep <- apply(y_rep, 1, mean)
+  sd_rep <- apply(y_rep, 1, sd)
+  
+  # Compute posterior predictive summaries for mean
+  mean_rep_mean <- mean(mean_rep)
+  mean_rep_CI <- quantile(mean_rep, probs = c(0.025, 0.975))
+  ppp_value_mean <- mean(mean_rep >= mean_obs)
+  
+  # Compute posterior predictive summaries for standard deviation
+  sd_rep_mean <- mean(sd_rep)
+  sd_rep_CI <- quantile(sd_rep, probs = c(0.025, 0.975))
+  ppp_value_sd <- mean(sd_rep >= sd_obs)
+  
+  # Create a data frame for the table
+  table_row <- data_frame(
+    `True Mean` = round(mean_obs, 3),
+    `True SD` = round(sd_obs, 3),
+    `Posterior Predictive Mean` = round(mean_rep_mean, 3),
+    `CI- Mean` =  paste0("[", round(mean_rep_CI[1], 3), ", ", round(mean_rep_CI[2], 3), "]"),
+    `Posterior Predictive SD` = round(sd_rep_mean, 3),
+    `CI- SD` =  paste0("[", round(sd_rep_CI[1], 3), ", ", round(sd_rep_CI[2], 3), "]"),
+    `Post. Pred. Mean p value` = round(ppp_value_mean, 3), 
+    `Post. Pred. SD p value` = round(ppp_value_sd, 3)
+  )
+  
+  
+  return(table_row)
+
+}
+
+
+```
+
+
+```{r concat-results}
+
+# rising
+rising_results <- bind_rows(cbind(rising_summ_15, create_posterior_pred_df(rising_model_15)),
+                            cbind(rising_summ_16, create_posterior_pred_df(rising_model_16)),
+                            cbind(rising_summ_17, create_posterior_pred_df(rising_model_17)),
+                            cbind(rising_summ_18, create_posterior_pred_df(rising_model_18)),
+                            cbind(rising_summ_2, create_posterior_pred_df(rising_model_2)))
+
+# falling
+falling_results <- bind_rows(cbind(falling_summ_15, create_posterior_pred_df(falling_model_15)),
+                            cbind(falling_summ_16, create_posterior_pred_df(falling_model_16)),
+                            cbind(falling_summ_17, create_posterior_pred_df(falling_model_17)),
+                            cbind(falling_summ_18, create_posterior_pred_df(falling_model_18)),
+                            cbind(falling_summ_2, create_posterior_pred_df(falling_model_2)))
+
+
+coherence_time_results <- bind_rows(rising_results %>% mutate(period = "Approach", Metric = "Im. Coh."), 
+                                    cbind(rising_summ_ppc_2, create_posterior_pred_df(rising_model_ppc_2)) %>% mutate(period = "Approach", Metric = "PPC"),
+                                    cbind(rising_summ_pli_2, create_posterior_pred_df(rising_model_pli_2)) %>% mutate(period = "Approach", Metric = "PLI"),
+                                    falling_results %>% mutate(period = "Avoid", Metric = "Im. Coh."),
+                                    cbind(falling_summ_ppc_2, create_posterior_pred_df(falling_model_ppc_2)) %>% mutate(period = "Avoid", Metric = "PPC"),
+                                    cbind(falling_summ_pli_2, create_posterior_pred_df(falling_model_pli_2))  %>% mutate(period = "Avoid", Metric = "PLI"))
+
+```
+
+```{r create-table, fig.wdith = 18}
+
+coherence_time_table <- coherence_time_results %>%
+  select(Metric, Timepoint, Estimate, Est.Error, `l-95% CI`, `u-95% CI`, Rhat, Bulk_ESS, Tail_ESS, colnames(coherence_time_results)[9:17]) %>%
+    group_by(period) %>%
+    gt() %>%
+    tab_options(
+      table.font.names = "Gill Sans",
+      table.font.size = px(12),
+      data_row.padding = px(4)
+    ) %>%
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = cells_row_groups()
+    ) %>%
+    tab_style(
+      style = cell_text(style = "italic"), # Apply italics to the first column
+      locations = cells_body(columns = 1:2)  # Apply only to the first column
+    ) %>%
+     tab_spanner(
+      label = "Posterior Predictive Checks",
+      columns = colnames(coherence_time_results)[9:16]
+    ) %>% 
+    tab_spanner(
+      label = "Model Estimates",
+      columns = colnames(coherence_time_results)[2:7]
+    ) %>% 
+    tab_header(title = md(paste0("**Effect of Time on Theta Coherence**")))
+
+
+coherence_time_table
+
+gtsave(coherence_time_table, path(here(), "figures", "connectivity", paste0("supplemental_table_rising_falling_table.png")))
+```
+
+
+

@@ -1,0 +1,407 @@
+---
+title: "Rising Connectivity - Imaginary Coherence"
+output: html_document
+date: "2024-06-02"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 8,  # set default width of figures
+  fig.height = 5,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lme4)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(effectsize)
+library(scales)
+library(JMbayes2)
+library(caret)
+library(rmarkdown)
+library(blme)
+library(brms)
+library(bayesplot)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", "clean_behavioral_data.R"))
+source(path(here(), "R", "create_distance_df.R"))
+source(path(here(), "R", "joint_modeling_functions.R"))
+source(path(here(), "R", "jm_visualization_functions.R"))
+source(path(here(), "R", "connectivity_prep_functions.R"))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# # ## parallelization ##
+# nCores <- 8
+# registerDoParallel(nCores)
+
+
+```
+
+## Theta Coherence ~ Time During Approach & Avoidance (Example plot)
+
+While the rising and falling theta coherence hypotheses are now tested in the `high_performance_cluster_batch_scripts` this script processes the data in the same way and then plots the example subject results used in Figure 3 Panel D
+
+Inputs
+* `combined_ghost_connectivity_newsubs.csv` which is an output of `Staveland_et_al_Pacman_Neural_Analyses/blob/main/connectivity/scripts/turnaround_coherence/concatenate_connectivity_results.ipynb` (Different repo)
+* `mni_coordinates_all_subs_with_detailed_regions.csv` which is an output of `Staveland_et_al_Pacman_Neural_Analyses/blob/main/across_subject_analyses/scripts/anatomy/plot_all_elecs_on_brain.ipynb` (Different repo)
+
+Outputs
+* `fig3_example_sub_approach.png` in the `figures/connectivity` folder
+* `fig3_example_sub_avoid.png` in the `figures/connectivity` folder
+
+
+
+```{r load-data}
+## load data ##
+conn_df <- read_csv(path(here(), "data_mount", "remote", "pacman", "connectivity", "ieeg", "imcoh_ppc_pli", "combined_ghost_connectivity_newsubs.csv"))
+
+
+## set colors ##
+roi_colors <-  c("Amygdala" = "#DE4A4D", "Hippocampus" = "#FFA602", "OFC" =  "#88D1A3", "Ant. Cingulate"=  "#3D99BA", "Insula" =  "#876194", "MFG" = "#FB6087", "SFG" = "#FB9A99")
+
+```
+
+
+```{r split-mfg-sfg}
+
+## split the dlpfc electrodes into MFG and SFG ##
+
+regions_df <- read_csv(path(here(), "munge", "mni_coordinates_all_subs_with_detailed_regions.csv"))
+
+mfg_df <- regions_df %>%
+  filter(region == "mfg") %>%
+  mutate(elec_id = paste0(subject, "_", Electrode))
+
+sfg_df <- regions_df %>%
+  filter(region == "sfg") %>%
+  mutate(elec_id = paste0(subject, "_", Electrode))
+
+conn_detailed_df <- conn_df %>%
+  mutate(
+    first_pair = gsub("_to_.*", "", pairs),
+    second_pair = gsub(".*_to_", "", pairs),
+    first_pair_1 = gsub("-.*", "", first_pair),
+    first_pair_2 = gsub(".*-", "", first_pair),
+    second_pair_1 = gsub("-.*", "", second_pair),
+    second_pair_2 = gsub(".*-", "", second_pair),
+  ) %>%
+  mutate(
+    detailed_first_region = if_else(
+        first_region == "dlpfc" &
+        paste0(subject, "_", first_pair_1) %in% mfg_df$elec_id |
+        paste0(subject, "_", first_pair_2) %in%  mfg_df$elec_id,
+      "mfg",
+      if_else(
+          first_region == "dlpfc" &
+          paste0(subject, "_", first_pair_1) %in% sfg_df$elec_id |
+          paste0(subject, "_", first_pair_2) %in%  sfg_df$elec_id,
+      "sfg",
+      first_region
+      )),
+    detailed_second_region = if_else(
+          second_region == "dlpfc" &
+          paste0(subject, "_", second_pair_1) %in% mfg_df$elec_id |
+          paste0(subject, "_", second_pair_2) %in%  mfg_df$elec_id,
+      "mfg",
+      if_else(
+          second_region == "dlpfc" &
+          paste0(subject, "_", second_pair_1) %in% sfg_df$elec_id |
+          paste0(subject, "_", second_pair_2) %in%  sfg_df$elec_id,
+      "sfg",
+      second_region
+      )
+     )
+    )
+
+
+## Check that everything worked correctly
+table(conn_detailed_df$detailed_first_region)
+table(conn_detailed_df$detailed_second_region)
+
+# final rename
+conn_detailed_df <- conn_detailed_df %>%
+  mutate(first_region = detailed_first_region, 
+         second_region = detailed_second_region)
+
+```
+
+
+```{r load-behvaioral-data}
+
+## load the behavioral data to see the min and average turn times ##
+
+# behavioral data #
+all_subs_g_dist <- read_csv(path(here(), "munge", "all_subs_complete_distance_df.csv"))
+all_subs_ng_dist <- read_csv(path(here(), "munge", "all_subs_noghost_complete_distance_df.csv"))
+
+# combine ghost and no ghost #
+all_subs_dist <- all_subs_g_dist %>% 
+  select(colnames(all_subs_ng_dist))
+all_subs_dist <- rbind(all_subs_dist, all_subs_ng_dist)
+
+# read in data already merged with ieeg to get the good ieeg trials
+hc_theta_data <- read_csv( path(here(), "munge", "theta_ieeg_hc_all_subs_logged_iti_onset.csv"))
+used_trials <- hc_theta_data %>%
+  mutate(subject_trial = paste0(subject, "_", trial_numeric)) %>%
+  pull(subject_trial) %>%
+  unique()
+
+## create turn df ##
+turn_df <- all_subs_dist %>%
+  # round time so that we can loop over time later
+  mutate(trial_time = round(trial_time, 2)) %>%
+  # exclude time before they started moving, may be good to look at not doing this as well
+  # filiter out ITI & trials with 0 dots
+  filter(reward_groups != 99 & dots_eaten > 0) %>%
+  group_by(trial_numeric, subject) %>%
+  # filter time so that trials end when the person turnaround for the final time
+  mutate(event = if_else(last_away == away_choice & away_choice != 0, 1, 0)) %>%
+  mutate(event = replace(event, is.na(event), 0)) %>%
+  mutate(turnaround_time = if_else(event == 1 & Eaten != 0, trial_time, 0)) %>%
+  mutate(turnaround_time = max(turnaround_time)) %>%
+  filter(turnaround_time != 0) %>%
+  mutate(turn_time = trial_time - turnaround_time) %>%
+  ungroup() %>%
+  select(subject, trial_numeric, turnaround_time, turn_time) %>%
+  distinct() %>%
+  mutate(time = round(turn_time, 1)) %>%
+  select(-turn_time) %>%
+  mutate(subject_trial = paste0(subject, "_", trial_numeric)) %>%
+  filter(subject_trial %in% used_trials)
+
+print(min(turn_df$turnaround_time))
+print(mean(turn_df$turnaround_time))
+
+```
+
+
+### Approach Dynamics
+
+```{r create-sig-df, fig.width=20, fig.height=15}
+
+# only use sig electrodes based on full dataset
+sig_df <- read_csv(path(here(), "results", "sig_theta_pairs.csv"))
+
+# pull the sig electrode key ##
+sig_electrodes <- sig_df %>%
+  mutate(sig_key = paste0(subject, pairs, metric)) %>%
+  pull(sig_key)
+
+```
+
+
+```{r create-approach-df}
+
+## create the approach df ##
+
+avd_time_window <- 2
+app_time_window <- -2
+
+app_sig_elec_df <- conn_detailed_df %>%
+  mutate(roi_pair = paste0(first_region, "_", second_region)) %>%
+  filter(time >= app_time_window & time <= 0) %>%
+  mutate(key = paste0(subject, pairs, metric)) %>%
+  filter(key %in% sig_electrodes) %>%
+  mutate(time = round(time, 1)) %>%
+  group_by(key, time) %>%
+  mutate(connectivity = mean(abs(connectivity))) %>%
+  select(-percent_sig) %>%
+  distinct() %>%
+  # get rid of unused regions
+  filter(!grepl("sfg", roi_pair)) %>%
+  filter(!grepl("insula", roi_pair)) %>%
+  filter(first_region != second_region) %>%
+  ## unify roi names
+  mutate(
+    roi_pair = case_when(
+      grepl("ofc", roi_pair) & grepl("hc", roi_pair) ~ "ofc_hc",
+      grepl("ofc", roi_pair) & grepl("amyg", roi_pair) ~ "ofc_amyg",
+      grepl("ofc", roi_pair) & grepl("mfg", roi_pair) ~ "ofc_mfg",
+      grepl("ofc", roi_pair) & grepl("cing", roi_pair) ~ "ofc_cing",
+      grepl("hc", roi_pair) & grepl("amyg", roi_pair) ~ "hc_amyg",
+      grepl("hc", roi_pair) & grepl("mfg", roi_pair) ~ "hc_mfg",
+      grepl("hc", roi_pair) & grepl("cing", roi_pair) ~ "hc_cing",
+      grepl("amyg", roi_pair) & grepl("mfg", roi_pair) ~ "amyg_mfg",
+      grepl("amyg", roi_pair) & grepl("cing", roi_pair) ~ "amyg_cing",
+      grepl("mfg", roi_pair) & grepl("cing", roi_pair) ~ "mfg_cing"
+    ))
+
+app_sig_avg_elec_df <- app_sig_elec_df %>%
+  group_by(metric, time, roi_pair, subject) %>%
+  mutate(average_sub_conn = mean(abs(connectivity))) %>%
+  ungroup() %>%
+  select(-pairs, -connectivity) %>%
+  distinct()
+
+imcoh_app_sig_df <- app_sig_elec_df %>%
+  ungroup() %>%
+  filter(metric == "Imaginary Coherence") %>%
+  mutate(scaled_log_connectivity = scale(log(connectivity))[,1]) %>%
+  select(subject, time, scaled_log_connectivity, connectivity, pairs, first_pair, second_pair, roi_pair, first_region, second_region, key) %>%
+  distinct()
+
+
+```
+
+
+### Avoidance Dynamics
+
+```{r create-sig-df, fig.width=20, fig.height=15}
+
+
+ avd_sig_elec_df <- conn_detailed_df %>%
+   mutate(roi_pair = paste0(first_region, "_", second_region)) %>%
+  filter(time >= 0 & time <= avd_time_window) %>%
+  mutate(key = paste0(subject, pairs, metric)) %>%
+  filter(key %in% sig_electrodes) %>%
+  mutate(time = round(time, 1)) %>%
+  group_by(key, time) %>%
+  mutate(connectivity = mean(abs(connectivity))) %>%
+  select(-percent_sig) %>%
+  distinct() %>%
+  # get rid of unused regions
+  filter(!grepl("sfg", roi_pair)) %>%
+  filter(!grepl("insula", roi_pair)) %>%
+  filter(first_region != second_region) %>%
+  ## unify roi names
+  mutate(
+    roi_pair = case_when(
+      grepl("ofc", roi_pair) & grepl("hc", roi_pair) ~ "ofc_hc",
+      grepl("ofc", roi_pair) & grepl("amyg", roi_pair) ~ "ofc_amyg",
+      grepl("ofc", roi_pair) & grepl("mfg", roi_pair) ~ "ofc_mfg",
+      grepl("ofc", roi_pair) & grepl("cing", roi_pair) ~ "ofc_cing",
+      grepl("hc", roi_pair) & grepl("amyg", roi_pair) ~ "hc_amyg",
+      grepl("hc", roi_pair) & grepl("mfg", roi_pair) ~ "hc_mfg",
+      grepl("hc", roi_pair) & grepl("cing", roi_pair) ~ "hc_cing",
+      grepl("amyg", roi_pair) & grepl("mfg", roi_pair) ~ "amyg_mfg",
+      grepl("amyg", roi_pair) & grepl("cing", roi_pair) ~ "amyg_cing",
+      grepl("mfg", roi_pair) & grepl("cing", roi_pair) ~ "mfg_cing"
+    ))
+
+
+avd_sig_avg_elec_df <- avd_sig_elec_df %>%
+  group_by(metric, time, roi_pair, subject) %>%
+  mutate(average_sub_conn = mean(abs(connectivity))) %>%
+  ungroup() %>%
+  select(-pairs, -connectivity) %>%
+  distinct()
+
+imcoh_avd_sig_avg_df <- avd_sig_avg_elec_df %>%
+  filter(metric == "Imaginary Coherence") %>%
+  select(subject, time, average_sub_conn, roi_pair, first_region, second_region) %>%
+  distinct()
+
+```
+
+
+```{r paper-plot, fig.width = 1.5, fig.height = 2.75, eval = F}
+
+# merge app and avd dfs #
+imcoh_sig_avg_df <- bind_rows(imcoh_avd_sig_avg_df %>% mutate(case = "Avoid"), 
+                              imcoh_app_sig_avg_df %>% mutate(case = "Approach"))
+
+# take the absolute value of time #
+indv_imcoh_sig_avg_plot_df <- imcoh_sig_avg_df %>%
+  mutate(plot_time = abs(time))
+
+
+# plot #
+imcoh_sig_ex_app_plot <- indv_imcoh_sig_avg_plot_df %>%
+  filter(case == "Approach" & subject == "BJH016") %>%
+  ggplot(., aes(x = time, y = log(average_sub_conn))) +
+  geom_jitter(alpha = .5, size = 2, color = "#D75356") +
+  geom_smooth(method = "lm", color = "black", fill = "grey") +
+  theme(panel.background = element_rect(fill = "white"), 
+    legend.position = "none",
+    axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+    axis.title =  element_text(family = "Gill Sans", color = "#2D2327", size = 11),
+    plot.title = element_text(family = "Gill Sans", color = "#2D2327", size = 11, hjust = .5, face = 'plain')) +
+  labs(color = "", fill = "", y = "Imaginary Coherence, log-scaled", x = "App. Time (s)") +
+  ggtitle("Approach")
+
+imcoh_sig_ex_app_plot
+
+# save #
+ggsave(path(here(), "figures", "connectivity", "fig3_example_sub_approach.png"), 
+       plot = imcoh_sig_ex_app_plot, 
+       width = 1.5, height = 3, units = "in", dpi = 600)
+
+
+```
+
+
+```{r paper-plot, fig.width = 1, fig.height = 3, eval = F}
+
+# plot #
+imcoh_sig_ex_avd_plot <- indv_imcoh_sig_avg_plot_df %>%
+  filter(case == "Avoid" & subject == "BJH016") %>%
+  ggplot(., aes(x = time, y = log(average_sub_conn))) +
+  geom_jitter(alpha = .5, size = 2, color = "#6390C8") +
+  geom_smooth(method = "lm", color = "black", fill = "grey") +
+  scale_y_continuous(position = 'right') +
+  theme(panel.background = element_rect(fill = "white"), 
+    legend.position = "none",
+    axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+    axis.title =  element_text(family = "Gill Sans", color = "#2D2327", size = 11),
+    plot.title = element_text(family = "Gill Sans", color = "#2D2327", size = 11, hjust = .5, face = 'plain')) +
+  labs(color = "", fill = "", y = "Imaginary Coherence, log-scaled", x = " Avd. Time (s)") +
+  ggtitle("Avoid")
+
+imcoh_sig_ex_avd_plot
+
+# save #
+ggsave(path(here(), "figures", "connectivity", "fig3_example_sub_avoid.png"), 
+       plot = imcoh_sig_ex_avd_plot, 
+       width = 1.5, height = 3, units = "in", dpi = 600)
+
+
+```
+

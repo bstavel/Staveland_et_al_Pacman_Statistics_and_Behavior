@@ -1,0 +1,443 @@
+---
+title: "Compile iEEG Onset ITI LOGGED Baseline"
+output: html_document
+date: "2023-09-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo <- FALSE,  # don't print the code chunk
+  warning <- FALSE,  # don't print warnings
+  message <- FALSE,  # don't print messages
+  fig.width <- 5,  # set default width of figures
+  fig.height <- 8,  # set default height of figures
+  fig.align <- "center",  # always align figure in center
+  fig.pos <- "H",  # always plot figure at the exact location of the code chunk
+  cache <- FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(ggeffects)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lmerTest)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(scales)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", 'create_distance_df.R'))
+source(path(here(), "R", 'clean_behavioral_data.R'))
+source(path(here(), "R", 'compile_ieeg_csv_files.R'))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+ghost_colors <- c("#E48DB7","#55BBC8", "#DE0D16")
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# ## parallelization ##
+# nCores <- 2
+# registerDoParallel(nCores)
+
+
+
+```
+
+
+# Concatenate Power Estimations by Frequency and Region
+
+Compiles all the ieeg data that is calculated using Morlet Wavelets, but does not bind with the behavioral files
+
+Run by knitting
+
+Inputs
+* All the output files created in `Staveland_et_al_Pacman_Neural_Analyses/blob/main/preprocessing/scripts/export_iti_baselined_csvs.ipynb`
+
+Outputs
+* A CSV with power values for each frequency band, and region
+
+```{r lists}
+
+## region lists ##
+hc_list <- c('BJH017', 'BJH046', 'BJH050', 'SLCH018', 'BJH051', 
+             'BJH021', 'BJH025', 'BJH016', 'SLCH002', 'BJH027', 'BJH029', 'BJH039', 'BJH041', 
+              'LL10', 'LL12', 'LL13', 'LL14', 'LL17', 'LL19')
+
+ofc_list <- c('BJH017', 'BJH046', 'BJH050', 'SLCH018', 'BJH051',
+              'BJH021', 'BJH025',  'BJH026', 'BJH016', 'SLCH002', 'BJH027', 'BJH029', 'BJH039', 'BJH041', 
+              'LL10', 'LL12', 'LL13', 'LL14', 'LL17', 'LL19')
+
+amyg_list <- c('BJH017', 'BJH046', 'BJH050', 'SLCH018', 'BJH051',
+               'BJH021', 'BJH025',  'BJH026', 'BJH016', 'SLCH002', 'BJH027', 'BJH029', 'BJH039', 'BJH041', 
+              'LL10', 'LL12', 'LL13', 'LL14', 'LL17', 'LL19')
+
+cing_list <- c('BJH017', 'BJH046', 'BJH050', 'BJH051',
+               'BJH021', 'BJH025',  'BJH026', 'BJH016', 'SLCH002',  'BJH039', 
+              'LL10', 'LL12', 'LL13',  'LL17', 'LL19')
+
+dlpfc_list <- c('BJH046', 'BJH050', 'BJH051',
+                'BJH021', 'BJH025',  'BJH026', 'BJH016', 'SLCH002', 'BJH027', 'BJH039',
+              'LL10', 'LL12', 'LL13', 'LL14', 'LL17', 'LL19')
+
+# insula_list <- c('BJH046', 'BJH050',  'BJH051',
+#                  'BJH021', 'BJH025',  'BJH026', 'BJH016', 'SLCH002', 'BJH027', 'BJH029', 'BJH041', 'LL12')
+
+## loma linda list ##
+ll_list <- c('LL10', 'LL12', 'LL13', 'LL14', 'LL17', 'LL19')
+
+freq_list <- c("delta", "theta", "alpha", "beta", "gamma", "hfa")
+freq_list <- "theta"
+file_tag <- "_onset_locked_logged_itibase.csv"
+
+
+
+```
+
+
+## Merge HC
+
+```{r merge-and-combine-hc, eval = T}
+
+for(frq in freq_list){
+
+    onset_df <- NULL
+    
+    for(cur_sub in hc_list){
+      
+      if(cur_sub %in% ll_list){
+        
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "hc", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 512, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+    
+        
+      } else {
+      
+        #  onset Data
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "hc", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 1000, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+      }
+      
+      if(is.null(onset_df)) {
+        
+        onset_df <- tmp_onset_df
+        
+      } else {
+        
+        onset_df <- rbind(onset_df, tmp_onset_df)
+        
+      }
+      
+      onset_df <- rbind(onset_df, tmp_onset_df)
+    
+    }
+    
+    # save #
+    write_csv(onset_df, path(here(), "munge", paste0(frq, "_ieeg_hc_all_subs_logged_iti_onset.csv")))
+
+}
+
+```
+
+## Merge Amygdala
+
+```{r merge-and-combine-amyg, eval = T}
+
+for(frq in freq_list){
+
+    onset_df <- NULL
+    
+    for(cur_sub in amyg_list){
+      
+      if(cur_sub %in% ll_list){
+        
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "amyg", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 512, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+    
+        
+      } else {
+      
+        #  onset Data
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "amyg", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 1000, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+      }
+      
+      if(is.null(onset_df)) {
+        
+        onset_df <- tmp_onset_df
+        
+      } else {
+        
+        onset_df <- rbind(onset_df, tmp_onset_df)
+        
+      }
+      
+      onset_df <- rbind(onset_df, tmp_onset_df)
+    
+    }
+    
+    # save #
+    write_csv(onset_df, path(here(), "munge", paste0(frq, "_ieeg_amyg_all_subs_logged_iti_onset.csv")))
+
+}
+
+```
+
+## Merge OFC
+
+```{r merge-and-combine-ofc, eval = T}
+
+for(frq in freq_list){
+
+    onset_df <- NULL
+    
+    for(cur_sub in ofc_list){
+      
+      if(cur_sub %in% ll_list){
+        
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "ofc", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 512, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+    
+        
+      } else {
+      
+        #  onset Data
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "ofc", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 1000, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+      }
+      
+      if(is.null(onset_df)) {
+        
+        onset_df <- tmp_onset_df
+        
+      } else {
+        
+        onset_df <- rbind(onset_df, tmp_onset_df)
+        
+      }
+      
+      onset_df <- rbind(onset_df, tmp_onset_df)
+    
+    }
+    
+    # save #
+    write_csv(onset_df, path(here(), "munge", paste0(frq, "_ieeg_ofc_all_subs_logged_iti_onset.csv")))
+
+}
+
+```
+
+## Merge Ant. Cingulate
+
+```{r merge-and-combine-cing, eval = T}
+
+for(frq in freq_list){
+
+    onset_df <- NULL
+    
+    for(cur_sub in cing_list){
+      
+      if(cur_sub %in% ll_list){
+        
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "cing", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 512, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+    
+        
+      } else {
+      
+        #  onset Data
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "cing", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 1000, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+      }
+      
+      if(is.null(onset_df)) {
+        
+        onset_df <- tmp_onset_df
+        
+      } else {
+        
+        onset_df <- rbind(onset_df, tmp_onset_df)
+        
+      }
+      
+      onset_df <- rbind(onset_df, tmp_onset_df)
+    
+    }
+    
+    # save #
+    write_csv(onset_df, path(here(), "munge", paste0(frq, "_ieeg_cing_all_subs_logged_iti_onset.csv")))
+
+}
+
+```
+
+
+## Merge dlPFC
+
+```{r merge-and-combine-dlpfc, eval = T}
+
+for(frq in freq_list){
+
+    onset_df <- NULL
+    
+    for(cur_sub in dlpfc_list){
+      
+      if(cur_sub %in% ll_list){
+        
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "dlpfc", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 512, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+    
+        
+      } else {
+      
+        #  onset Data
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "dlpfc", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 1000, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+      }
+      
+      if(is.null(onset_df)) {
+        
+        onset_df <- tmp_onset_df
+        
+      } else {
+        
+        onset_df <- rbind(onset_df, tmp_onset_df)
+        
+      }
+      
+      onset_df <- rbind(onset_df, tmp_onset_df)
+    
+    }
+    
+    # save #
+    write_csv(onset_df, path(here(), "munge", paste0(frq, "_ieeg_dlpfc_all_subs_logged_iti_onset.csv")))
+
+}
+
+```
+
+## Merge Insula
+
+```{r merge-and-combine-insula, eval = F}
+
+for(frq in freq_list){
+
+    onset_df <- NULL
+    
+    for(cur_sub in insula_list){
+      
+      if(cur_sub %in% ll_list){
+        
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "insula", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 512, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+    
+        
+      } else {
+      
+        #  onset Data
+        tmp_onset_df <- compile_ieeg_csv_files(roi = "insula", 
+                                                    sub = cur_sub, 
+                                                    sample_freq = 1000, 
+                                                    timelock_folder = "trial_onset",
+                                                    keyword_include = paste0("trial_", frq, file_tag),
+                                                    keyword_exclude = "99999")
+      }
+      
+      if(is.null(onset_df)) {
+        
+        onset_df <- tmp_onset_df
+        
+      } else {
+        
+        onset_df <- rbind(onset_df, tmp_onset_df)
+        
+      }
+      
+      onset_df <- rbind(onset_df, tmp_onset_df)
+    
+    }
+    
+    # save #
+    write_csv(onset_df, path(here(), "munge", paste0(frq, "_ieeg_insula_all_subs_logged_iti_onset.csv")))
+
+}
+
+```

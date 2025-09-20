@@ -1,0 +1,502 @@
+---
+title: "Average Theta & HFA Profiles"
+output: html_document
+date: "2024-05-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 5,  # set default width of figures
+  fig.height = 8,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(ggeffects)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lmerTest)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(scales)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", 'create_distance_df.R'))
+source(path(here(), "R", 'clean_behavioral_data.R'))
+source(path(here(), "R", 'compile_ieeg_csv_files.R'))
+source(path(here(), "R", 'run_and_plot_lme_models.R'))
+source(path(here(), "R", 'separate_mfg_sfg.R'))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+ghost_colors <- c("#E48DB7","#55BBC8", "#DE0D16")
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# ## parallelization ##
+# nCores <- 2
+# registerDoParallel(nCores)
+
+
+## set colors ##
+roi_colors <-  c("Amygdala" = "#DE4A4D", "Hippocampus" = "#FFA602", "OFC" =  "#88D1A3", "Ant. Cingulate"=  "#3D99BA",  "MFG" = "#876194")
+
+
+```
+
+## Local Power Profiles
+
+This script creates figures for average theta and HFA power profiles. 
+
+Inputs:
+* `theta_ieeg_REGION_all_subs_logged_iti_onset.csv` from  `analysis/freq_power_analyses/compile_ieeg_files_iti_logged_trialonset.Rmd`
+* `all_subs_complete_distance_df.csv` which is an output of `analysis/cleaning_ieeg_behavior/combine_ieeg_subs_behavior.Rmd`.
+
+Outputs:
+* Figure 2d
+* Supplemental Figure 4
+
+```{r load-data}
+
+# ieeg theta data #
+cing_theta_data <- read_csv( path(here(), "munge", "theta_ieeg_cing_all_subs_logged_iti_onset.csv"))
+ofc_theta_data <- read_csv( path(here(), "munge", "theta_ieeg_ofc_all_subs_logged_iti_onset.csv"))
+amyg_theta_data <- read_csv( path(here(), "munge", "theta_ieeg_amyg_all_subs_logged_iti_onset.csv"))
+hc_theta_data <- read_csv( path(here(), "munge", "theta_ieeg_hc_all_subs_logged_iti_onset.csv"))
+dlpfc_theta_data <- read_csv( path(here(), "munge", "theta_ieeg_dlpfc_all_subs_logged_iti_onset.csv"))
+
+# ieeg hfa data #
+cing_hfa_data <- read_csv( path(here(), "munge", "hfa_ieeg_cing_all_subs_logged_iti_onset.csv"))
+ofc_hfa_data <- read_csv( path(here(), "munge", "hfa_ieeg_ofc_all_subs_logged_iti_onset.csv"))
+amyg_hfa_data <- read_csv( path(here(), "munge", "hfa_ieeg_amyg_all_subs_logged_iti_onset.csv"))
+hc_hfa_data <- read_csv( path(here(), "munge", "hfa_ieeg_hc_all_subs_logged_iti_onset.csv"))
+dlpfc_hfa_data <- read_csv( path(here(), "munge", "hfa_ieeg_dlpfc_all_subs_logged_iti_onset.csv"))
+
+# separate dlpfc into sfg and mfg -- theta
+dlpfc_theta_data <- dlpfc_theta_data %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+dlpfc_theta_data <- separate_mfg_sfg(dlpfc_theta_data)
+sfg_theta_data <- dlpfc_theta_data %>% filter(sfg == 1) %>% select(-sfg, -mfg)
+mfg_theta_data <- dlpfc_theta_data %>% filter(mfg == 1) %>% select(-sfg, -mfg)
+
+# separate dlpfc into sfg and mfg -- hfa
+dlpfc_hfa_data <- dlpfc_hfa_data %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+dlpfc_hfa_data <- separate_mfg_sfg(dlpfc_hfa_data)
+sfg_hfa_data <- dlpfc_hfa_data %>% filter(sfg == 1) %>% select(-sfg, -mfg)
+mfg_hfa_data <- dlpfc_hfa_data %>% filter(mfg == 1) %>% select(-sfg, -mfg)
+
+
+# behavioral data #
+all_subs_g_dist <- read_csv(path(here(), "munge", "all_subs_complete_distance_df.csv"))
+all_subs_ng_dist <- read_csv(path(here(), "munge", "all_subs_noghost_complete_distance_df.csv"))
+
+
+# add ITI to behavioral df
+behavior_iti_df <- all_subs_g_dist %>% 
+  select(subject, trial_numeric, trial_time) %>%
+  filter(trial_time < 1) %>%
+  mutate(trial_time = round(trial_time - 1, 2))
+
+all_subs_dist <- full_join(all_subs_g_dist, behavior_iti_df)
+
+```
+
+```{r read-in-attack-tables}
+
+
+## load and compile attack tables ##
+for(sub in unique(all_subs_dist$subject)){
+  
+  tmp <- read_csv(path(here(), "data", "ieeg_behave", paste0(sub, "_attack_events.csv")))
+  tmp <- tmp %>%
+    mutate(subject = sub)
+  
+  if(exists("attack_events")){
+    attack_events <- bind_rows(attack_events, tmp)
+  } else {
+    attack_events <- tmp
+  }
+  
+}
+
+## modify to get trials of interest ##
+attack_events <- attack_events %>%
+  mutate(trial_numeric = neural_trial_numeric + 1) %>%
+  rename(ghost_attack_trial = event) %>%
+  select(subject, trial_numeric, ghost_attack_trial)
+
+
+all_subs_dist <- left_join(all_subs_dist, attack_events, by = c("subject", "trial_numeric"))
+all_subs_dist <- all_subs_dist %>%
+  mutate(ghost_attack_trial = ifelse(is.na(ghost_attack_trial), 0, ghost_attack_trial)) %>%
+  filter(ghost_attack_trial == 0)
+
+```
+
+
+
+```{r bind-theta-data}
+
+# prep theta data #
+cing_data <- cing_theta_data %>% 
+  mutate(freq = "theta") %>%
+  mutate(region = "Ant. Cingulate") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+ofc_data <- ofc_theta_data %>% 
+  mutate(freq = "theta") %>%
+  mutate(region = "OFC") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+hc_data <- hc_theta_data %>% 
+  mutate(freq = "theta") %>%
+  mutate(region = "Hippocampus") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+amyg_data <- amyg_theta_data %>% 
+  mutate(freq = "theta") %>%
+  mutate(region = "Amygdala") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+
+mfg_data <- mfg_theta_data %>%
+  mutate(freq = "theta") %>%
+  mutate(region = "MFG") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+# bind ieeg data #
+ieeg_data <- bind_rows(cing_data, ofc_data, hc_data, amyg_data, mfg_data)
+
+# crop time 
+ieeg_data <- ieeg_data %>% 
+  mutate(trial_time = trial_time - 3)  %>%
+  filter(trial_time >= -1)
+
+
+# bind with behavioral data #
+ieeg_theta_behave_df <- left_join(all_subs_dist %>% select(-move_step) %>% mutate(trial_time = round(trial_time, 2)), 
+                               ieeg_data %>% mutate(trial_time = round(trial_time, 2)))
+
+```
+
+```{r bind-hfa-data}
+
+# prep hfa data #
+cing_data <- cing_hfa_data %>% 
+  mutate(freq = "hfa") %>%
+  mutate(region = "Ant. Cingulate") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+ofc_data <- ofc_hfa_data %>% 
+  mutate(freq = "hfa") %>%
+  mutate(region = "OFC") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+hc_data <- hc_hfa_data %>% 
+  mutate(freq = "hfa") %>%
+  mutate(region = "Hippocampus") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+amyg_data <- amyg_hfa_data %>% 
+  mutate(freq = "hfa") %>%
+  mutate(region = "Amygdala") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+
+mfg_data <- mfg_hfa_data %>%
+  mutate(freq = "hfa") %>%
+  mutate(region = "MFG") %>%
+  rename(power = theta) %>%
+  mutate(electrode = gsub("_.*", "", electrode))
+
+# bind ieeg data #
+ieeg_data <- bind_rows(cing_data, ofc_data, hc_data, amyg_data, mfg_data)
+
+# crop time 
+ieeg_data <- ieeg_data %>% 
+  mutate(trial_time = trial_time - 3)  %>%
+  filter(trial_time >= -1)
+
+
+# bind with behavioral data #
+ieeg_hfa_behave_df <- left_join(all_subs_dist %>% select(-move_step) %>% mutate(trial_time = round(trial_time, 2)), 
+                               ieeg_data %>% mutate(trial_time = round(trial_time, 2)))
+
+```
+
+
+```{r shift-to-turnaround}
+
+
+# shift to center around turnaround -- theta #
+turnaround_theta_df <- ieeg_theta_behave_df %>%
+  # round time so that we can loop over time later
+  mutate(trial_time = round(trial_time, 2)) %>%
+  # filiter out ITI
+  filter(reward_groups != 99 & !is.na(electrode)) %>%
+  # prep electrode variables
+  mutate(elec_id = paste0(subject, "_", gsub("_.*", "", electrode))) %>%
+  # shift the time so that time 0 is the start of movement onset
+  group_by(elec_id, trial_numeric, subject, freq, region) %>%
+  # filter time so that trials end when the person turnaround for the final time
+  mutate(event = if_else(last_away == away_choice & away_choice != 0, 1, 0)) %>%
+  mutate(event = replace(event, is.na(event), 0)) %>%
+  mutate(turnaround_time = if_else(event == 1, trial_time, 0)) %>%
+  mutate(turnaround_time = max(turnaround_time)) %>%
+  mutate(time = trial_time - turnaround_time) %>%
+  ungroup() 
+
+# shift to center around turnaround -- hfa #
+turnaround_hfa_df <- ieeg_hfa_behave_df %>%
+  # round time so that we can loop over time later
+  mutate(trial_time = round(trial_time, 2)) %>%
+  # filiter out ITI
+  filter(reward_groups != 99 & !is.na(electrode)) %>%
+  # prep electrode variables
+  mutate(elec_id = paste0(subject, "_", gsub("_.*", "", electrode))) %>%
+  # shift the time so that time 0 is the start of movement onset
+  group_by(elec_id, trial_numeric, subject, freq, region) %>%
+  # filter time so that trials end when the person turnaround for the final time
+  mutate(event = if_else(last_away == away_choice & away_choice != 0, 1, 0)) %>%
+  mutate(event = replace(event, is.na(event), 0)) %>%
+  mutate(turnaround_time = if_else(event == 1, trial_time, 0)) %>%
+  mutate(turnaround_time = max(turnaround_time)) %>%
+  mutate(time = trial_time - turnaround_time) %>%
+  ungroup() 
+
+
+turnaround_df <- bind_rows(turnaround_theta_df,  turnaround_hfa_df)
+
+```
+
+
+
+```{r, fig.width = 5, fig.height = 3.3}
+
+# plot
+turn_avg_theta_df <- turnaround_df %>%
+  mutate(time = round(time, 2)) %>%
+  filter(time >= -2 & time <= 2) %>%
+  # Calculate mean power per electrode
+  group_by(freq, subject, region, time, elec_id) %>%
+  summarise(elec_power = mean(power), .groups = 'drop') %>%
+  # Calculate mean power per subject
+  group_by(freq, subject, region, time) %>%
+  summarise(sub_power = mean(elec_power), .groups = 'drop') %>%
+  # Calculate mean power per region and compute SEM
+  group_by(freq, region, time) %>%
+  summarise(
+    mean_power = mean(sub_power, na.rm = TRUE),
+    n = n(),
+    sd_sub_power = sd(sub_power, na.rm = TRUE),
+    lower_sem = mean_power - sd_sub_power / sqrt(n),
+    upper_sem = mean_power + sd_sub_power / sqrt(n),
+    .groups = 'drop'
+  )
+
+turn_sub_avg_theta_df <- turnaround_df %>%
+  filter(freq == "theta") %>%
+  mutate(time = round(time, 2)) %>%
+  filter(time >= -2 & time <= 2) %>%
+  # Calculate mean power per electrode
+  group_by(subject, region, time, elec_id) %>%
+  summarise(elec_power = mean(power), .groups = 'drop') %>%
+  # Calculate mean power per subject
+  group_by(subject, region, time) %>%
+  summarise(
+    sub_power = mean(elec_power),
+    n = n(),
+    sd_sub_power = sd(elec_power, na.rm = TRUE),
+    lower_sem = sub_power - sd_sub_power / sqrt(n),
+    upper_sem = sub_power + sd_sub_power / sqrt(n),
+    .groups = 'drop') 
+
+power_profile_plot <- turn_avg_theta_df %>%
+  mutate(region = factor(region, levels = c("Amygdala", "Hippocampus", "OFC", "Ant. Cingulate", "MFG"))) %>%
+  select(freq, region, time, mean_power, lower_sem, upper_sem) %>%
+  distinct() %>%
+  mutate(group = if_else(freq == "theta", "Theta Power", "High-Frequency Activity")) %>%
+  mutate(group = factor(group, levels = c("Theta Power", "High-Frequency Activity"))) %>%
+  ggplot(aes(x = time, y = mean_power, color = region, fill = region, group = region)) +
+  geom_vline(xintercept = 0, color = "#2D2327") +
+  # geom_point() + 
+  geom_ribbon(aes(ymin = lower_sem, ymax = upper_sem), alpha = 0.2) +
+  geom_line(size = 1) +
+  scale_color_manual(values = roi_colors) +
+  scale_fill_manual(values = roi_colors) +
+  theme(panel.background = element_rect(fill = "white"),
+      legend.position = "top",
+      axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+      axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+      legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+      legend.title  = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+      strip.text = element_text(family = "Gill Sans", color = "#2D2327", size = 10, margin = margin()),
+      plot.title = element_text(family = "Gill Sans", color = "#2D2327", size = 10, hjust = 0, face = 'bold')) +
+  labs(y = "Mean Power (z - score)", x = "Time (s)", color = " ", fill = " ") +
+  ggtitle("Average Power Across Regions") +
+  xlim(-1.5, 1.5) +
+  facet_wrap(~group, ncol = 2) 
+
+power_profile_plot
+
+ggsave(path(here(), "figures", "hfa_theta_power_profile.png"), power_profile_plot, width = 5, height = 3.3)
+
+```
+
+
+
+```{r, fig.width = 10, fig.height = 18}
+
+mfg_turn_sub_avg_theta_df <- turn_sub_avg_theta_df %>%
+  filter(region == "MFG")
+
+
+mfg_supplement_plot <- mfg_turn_sub_avg_theta_df %>%
+  ggplot(aes(x = time, y = sub_power, group = subject, color = region, fill = region)) +
+  geom_vline(xintercept = 0, color = "#2D2327") +
+  geom_line(size =.5) +
+  geom_ribbon(aes(ymin = lower_sem, ymax = upper_sem), alpha = 0.2) +
+  scale_color_manual(values = roi_colors) +
+  scale_fill_manual(values = roi_colors) +
+  theme(panel.background = element_rect(fill = "white"),
+      legend.position = "top",
+      axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+      axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 10),
+      legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+      legend.title  = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+      strip.text = element_text(family = "Gill Sans", color = "#2D2327", size = 9, margin = margin()),
+      plot.title = element_text(family = "Gill Sans", color = "#2D2327", size = 11, hjust = 0, face = 'bold')) +
+  labs(y = "Mean Theta Power (z - score)", x = "Time (s)", color = " ", fill = " ") +
+  ggtitle("Average particpant theta power")  +
+  xlim(-1.5, 1.5) +
+  facet_wrap(~subject, scale = "free_x", ncol = 2)
+
+
+
+ggsave(path(here(), "figures", "power_analyses", "SuppFig3_figure_mfg_power.png"), mfg_supplement_plot, width = 4, height = 9, dpi = 600)
+
+
+
+```
+
+
+```{r, fig.width = 10, fig.height = 18}
+
+mfg_example_turn_sub_avg_theta_df <- turnaround_df %>%
+  filter(region == "MFG" & freq == "theta" & subject == "BJH021") %>%
+  mutate(time = round(time, 2)) %>%
+  filter(time >= -1.5 & time <= 1.5) %>%
+  # Calculate mean power per electrode
+  group_by(region, subject, time, elec_id) %>%
+  summarise(
+    mean_power = mean(power, na.rm = TRUE),
+    n = n(),
+    sd_power = sd(power, na.rm = TRUE),
+    lower_sem = mean_power - sd_power / sqrt(n),
+    upper_sem = mean_power + sd_power / sqrt(n),
+    .groups = 'drop'
+  )
+  
+mfg_example_turn_sub_avg_theta_df <- ieeg_theta_behave_df %>%
+  filter(region == "MFG" & freq == "theta" & subject == "BJH051") %>%
+  # round time so that we can loop over time later
+  mutate(trial_time = round(trial_time, 2)) %>%
+  rename(time = trial_time) %>%
+  mutate(elec_id = paste0(subject, "_", gsub("_.*", "", electrode))) %>%
+  # filiter out ITI
+  filter(reward_groups != 99 & !is.na(electrode)) %>%
+  filter(time >= -1.5 & time <= 4) %>%
+  # Calculate mean power per electrode
+  group_by(region, subject, time, elec_id) %>%
+  summarise(
+    mean_power = mean(power, na.rm = TRUE),
+    n = n(),
+    sd_power = sd(power, na.rm = TRUE),
+    lower_sem = mean_power - sd_power / sqrt(n),
+    upper_sem = mean_power + sd_power / sqrt(n),
+    .groups = 'drop'
+  ) 
+
+
+mfg_subject_supplement_plot <- mfg_example_turn_sub_avg_theta_df %>%
+  mutate(theta_peak = if_else(elec_id %in% c("BJH021_N11-N12", "BJH021_N12-N13", "BJH021_N13-N14", "BJH021_N15-N16"), "Had Theta Peak", "No Theta Peak")) %>%
+  ggplot(aes(x = time, y = mean_power, group = elec_id, color = theta_peak, fill = theta_peak)) +
+  geom_vline(xintercept = 0, color = "#2D2327") +
+  geom_hline(yintercept = 0, color = "#2D2327", linetype = "dashed") +
+  geom_line(size =.5) +
+  geom_ribbon(aes(ymin = lower_sem, ymax = upper_sem), alpha = 0.2) +
+  scale_color_manual(values = c("#876194", "darkgrey")) +
+  scale_fill_manual(values = c("#876194", "darkgrey")) +
+  theme(panel.background = element_rect(fill = "white"),
+      legend.position = "top",
+      axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+      axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 10),
+      legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+      legend.title  = element_text(family = "Gill Sans", color = "#2D2327", size = 8),
+      strip.text = element_text(family = "Gill Sans", color = "#2D2327", size = 9, margin = margin()),
+      plot.title = element_text(family = "Gill Sans", color = "#2D2327", size = 11, hjust = 0, face = 'bold')) +
+  labs(y = "Mean Theta Power (z - score)", x = "Time (s)", color = " ", fill = " ") +
+  ggtitle("Average electrode theta power from example subject")  +
+  facet_wrap(~elec_id, scale = "free_x", ncol = 3)
+
+
+mfg_subject_supplement_plot
+
+
+ggsave(path(here(), "figures", "power_analyses", "SuppFig3_figure_mfg_power_example_subject.png"), mfg_subject_supplement_plot, width = 5, height = 4.5, dpi = 600)
+
+
+
+```
+
+``
+

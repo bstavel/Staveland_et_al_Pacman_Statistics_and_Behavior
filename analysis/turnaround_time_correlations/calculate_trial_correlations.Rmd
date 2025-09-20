@@ -1,0 +1,367 @@
+---
+title: "Calculate Correlations for Turn Time Analysis"
+output: html_document
+date: "2024-04-29"
+---
+
+
+```{r setup, include=FALSE}
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(lmerTest)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(lmtest)
+library(scales)
+library(ggthemr)
+library(RColorBrewer)
+library(broom.mixed)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", 'create_distance_df.R'))
+source(path(here(), "R", 'clean_behavioral_data.R'))
+source(path(here(), "R", 'compile_ieeg_csv_files.R'))
+source(path(here(), "R", 'run_and_plot_lme_models.R'))
+
+## plotting helpers ##
+ggthemr("light")
+ghost_colors <- c("#E48DB7","#55BBC8", "#DE0D16")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+```
+
+## Power Envelope Correlations
+
+This script uses the power estimates for each electrode and goes trial by trial and calculates the correlation between all electrode pairs across regions for each trial. 
+
+Inputs: 
+* `theta_ieeg_REGION_all_subs_logged_iti_onset.csv` which are outputs of `analyhsis/freq_power_analyses/compile_ieeg_files_iti_logged_trialonset.Rmd`
+* `hfa_correlations_newsubs.csv` which is calculated in `calculate_trial_correlations.Rmd`
+* `all_subs_complete_distance_df.csv` which is an output of `analysis/cleaning_ieeg_behavior/combine_ieeg_subs_behavior.Rmd`
+
+Outputs:
+* `theta_correlations_newsubs.csv` which is calculated in `calculate_trial_correlations.Rmd`
+* `turnaround_correl_trial_turn_times.csv` which is calculated in `calculate_trial_correlations.Rmd`
+
+
+```{r load-data}
+
+freq <- "theta"
+
+# ieeg data #
+ofc_theta_data <- read_csv( path(here(), "munge", paste0(freq, "_ieeg_ofc_all_subs_logged_iti_onset.csv")))
+amyg_theta_data <- read_csv( path(here(), "munge", paste0(freq, "_ieeg_amyg_all_subs_logged_iti_onset.csv")))
+hc_theta_data <- read_csv( path(here(), "munge", paste0(freq, "_ieeg_hc_all_subs_logged_iti_onset.csv")))
+cing_theta_data <- read_csv( path(here(), "munge", paste0(freq, "_ieeg_cing_all_subs_logged_iti_onset.csv")))
+dlpfc_theta_data <- read_csv( path(here(), "munge", paste0(freq, "_ieeg_dlpfc_all_subs_logged_iti_onset.csv")))
+
+# bind ieeg data #
+all_subs_theta_data <- bind_rows(ofc_theta_data %>% mutate(region = "ofc"),
+                                 amyg_theta_data %>% mutate(region = "amyg"),
+                                 hc_theta_data %>% mutate(region = "hc"),
+                                 cing_theta_data %>% mutate(region = "cing"),
+                                 dlpfc_theta_data %>% mutate(region = "dlpfc")) 
+
+# crop time 
+all_subs_theta_data <- all_subs_theta_data %>% 
+  mutate(trial_time = trial_time - 3)  %>%
+  filter(trial_time >= -1)
+
+
+# behavioral data #
+all_subs_g_dist <- read_csv(path(here(), "munge", "all_subs_complete_distance_df.csv"))
+
+all_subs_g_dist <- all_subs_g_dist %>%
+  filter(attack_chase_bob == "Bob") 
+
+
+
+```
+
+```{r prep-data}
+
+# merge behavior data with ieeg data
+ieeg_behave_df <- left_join(all_subs_g_dist %>% mutate(trial_time = round(trial_time, 2)), 
+                             all_subs_theta_data %>% mutate(trial_time = round(trial_time, 2)), by = join_by(subject, trial_numeric, trial_time))
+
+# shift to move time, remove data after turn
+onset_lme_df <- ieeg_behave_df %>%
+    # round time so that we can loop over time later
+    mutate(trial_time = round(trial_time, 2)) %>%
+    # exclude time before they started moving, may be good to look at not doing this as well
+    filter(Direction != "Still") %>%
+    # filiter out ITI
+    filter(reward_groups != 99 & !is.na(electrode)) %>%
+    # prep electrode variables
+    mutate(elec_id = paste0(subject, "_", gsub("_.*", "", electrode))) %>%
+    mutate(electrode = gsub("_.*", "", electrode)) %>%
+    # shift the time so that time 0 is the start of movement onset
+    group_by(elec_id, trial_numeric, subject) %>%
+    mutate(move_time = round(trial_time - first(trial_time), 2)) %>%
+    # filter time so that trials end when the person turnaround for the final time
+    mutate(event = if_else(last_away == away_choice & away_choice != 0, 1, 0)) %>%
+    mutate(event = replace(event, is.na(event), 0)) %>%
+    mutate(turnaround_time = if_else(event == 1, move_time, 0)) %>%
+    filter(move_time < max(turnaround_time)) %>%
+    ungroup() %>%
+    group_by(move_time) %>%
+    ungroup() %>%
+    select(subject, elec_id, theta, region, trial_numeric, move_time, last_away, dots_eaten) %>%
+    distinct() 
+
+# calculate turn times
+turn_time_df <- onset_lme_df %>%
+  select(subject, trial_numeric, move_time, last_away, dots_eaten) %>%
+  distinct() %>%
+  group_by(subject, trial_numeric) %>%
+  mutate(turn_time = last(move_time)) %>%
+  select(subject, trial_numeric, turn_time, last_away, dots_eaten) %>%
+  distinct() %>%
+  rename(trial = trial_numeric) %>%
+  mutate(logged_times = log(turn_time))
+
+
+write_csv(turn_time_df, path(here(), "munge", "turnaround_correl_trial_turn_times.csv"))
+
+```
+
+```{r save-out-power-analyses}
+
+theta_power_df <- onset_lme_df %>%
+  group_by(subject, trial_numeric, elec_id, region) %>%
+  mutate(approach_power = mean(theta)) %>%
+  rename(trial = trial_numeric) %>%
+  select(-theta, -move_time) %>%
+  distinct()
+
+theta_turn_time_power_df <- left_join(theta_power_df, turn_time_df)
+
+write_csv(theta_turn_time_power_df, path(here(), "results", paste0(freq, "_trial_power_newsubs.csv")))
+
+
+```
+
+
+
+```{r, fig.height = 6, fig.width = 12, eval = F}
+
+full_ofc_iti_df <- ofc_theta_data %>%
+  filter(trial_time <= 0) %>%
+  filter(subject == "BJH016") %>%
+  distinct() %>%
+  mutate(electrode = gsub("_trial_theta_onset_locked_logged_itibase.csv", "", electrode)) %>%
+  pivot_wider(names_from = electrode, values_from = theta)
+
+
+full_amyg_iti_df <- amyg_theta_data %>%
+  filter(trial_time <= 0) %>%
+  filter(subject == "BJH016") %>%
+  distinct() %>%
+  mutate(electrode = gsub("_trial_theta_onset_locked_logged_itibase.csv", "", electrode)) %>%
+  pivot_wider(names_from = electrode, values_from = theta)
+
+
+half_ofc_iti_df <- ofc_theta_data %>%
+  filter(trial_time <= 0 & trial_time >= -.5) %>%
+  filter(subject == "BJH016") %>%
+  distinct() %>%
+  mutate(electrode = gsub("_trial_theta_onset_locked_logged_itibase.csv", "", electrode)) %>%
+  pivot_wider(names_from = electrode, values_from = theta)
+
+
+half_amyg_iti_df <- amyg_theta_data %>%
+  filter(trial_time <= 0 & trial_time >= -.5) %>%
+  filter(subject == "BJH016") %>%
+  distinct() %>%
+  mutate(electrode = gsub("_trial_theta_onset_locked_logged_itibase.csv", "", electrode)) %>%
+  pivot_wider(names_from = electrode, values_from = theta)
+
+trial <- sample(half_ofc_iti_df$trial_numeric, 1)
+
+cor_half_mat <- cor(half_ofc_iti_df %>% filter(trial_numeric == trial) %>% select(-trial_numeric, -trial_time, -subject),
+    half_amyg_iti_df %>% filter(trial_numeric == trial) %>% select(-trial_numeric, -trial_time, -subject))
+
+
+cor_full_mat <- cor(full_ofc_iti_df %>% filter(trial_numeric == trial) %>% select(-trial_numeric, -trial_time, -subject),
+    full_amyg_iti_df %>% filter(trial_numeric == trial) %>% select(-trial_numeric, -trial_time, -subject))
+
+
+
+t.test(cor_half_mat, cor_full_mat)
+
+
+```
+
+```{r}
+
+# Detect the number of cores available
+no_cores <- detectCores() - 1  # Leave one core free
+
+# Initialize the cluster
+cl <- makeCluster(no_cores)
+
+# Register the parallel backend
+registerDoParallel(cl)
+
+# Initialize the results list
+results_list <- list()
+
+# Get all unique regions
+regions <- unique(onset_lme_df$region)
+
+# Generate all unique pairs of regions without redundancy
+region_pairs <- t(combn(regions, 2))
+colnames(region_pairs) <- c('first_region', 'second_region')
+region_pairs <- as.data.frame(region_pairs, stringsAsFactors = FALSE)
+
+# Loop over each pair of regions
+for (i in 1:nrow(region_pairs)) {
+  first_roi <- region_pairs$first_region[i]
+  second_roi <- region_pairs$second_region[i]
+  
+  print(paste0("Processing regions: ", first_roi, " and ", second_roi))
+  
+  first_roi_df <- onset_lme_df %>% filter(region == first_roi)
+  second_roi_df <- onset_lme_df %>% filter(region == second_roi)
+  
+  subs_with_both_rois <- intersect(first_roi_df$subject, second_roi_df$subject)
+  
+  # Parallelize over subjects
+  results_sub <- foreach(
+    sub = subs_with_both_rois, 
+    .combine = 'bind_rows', 
+    .packages = c('dplyr'),
+    .errorhandling = 'pass'  # Continue even if errors occur
+  ) %dopar% {
+    tryCatch({
+      first_roi_sub_df <- first_roi_df %>% filter(subject == sub)
+      second_roi_sub_df <- second_roi_df %>% filter(subject == sub)
+      
+      result_rows <- list()
+      row_counter <- 1
+      
+      # Loop over electrodes in the first region
+      for (roi1_elec in unique(first_roi_sub_df$elec_id)) {
+        first_elec_df <- first_roi_sub_df %>%
+          filter(elec_id == roi1_elec) %>%
+          select(trial_numeric, move_time, theta) %>%
+          distinct()
+        
+        # Loop over electrodes in the second region
+        for (roi2_elec in unique(second_roi_sub_df$elec_id)) {
+          second_elec_df <- second_roi_sub_df %>%
+            filter(elec_id == roi2_elec) %>%
+            select(trial_numeric, move_time, theta) %>%
+            distinct()
+          
+          # Loop over trials
+          for (trial in unique(second_roi_sub_df$trial_numeric)) {
+            roi1_trial_df <- first_elec_df %>% filter(trial_numeric == trial)
+            roi2_trial_df <- second_elec_df %>% filter(trial_numeric == trial)
+            
+            # Check for non-empty data frames
+            if (nrow(roi1_trial_df) > 0 && nrow(roi2_trial_df) > 0) {
+              # Align data based on move_time
+              merged_df <- merge(
+                roi1_trial_df, roi2_trial_df, 
+                by = c('move_time'), 
+                suffixes = c('_roi1', '_roi2')
+              )
+              
+              # Ensure there are enough data points
+              if (nrow(merged_df) > 1) {
+                # Compute correlation
+                correlation <- tryCatch({
+                  cor(merged_df$theta_roi1, merged_df$theta_roi2, use = "complete.obs")
+                }, error = function(e) {
+                  NA  # Return NA if correlation fails
+                })
+              } else {
+                correlation <- NA
+              }
+            } else {
+              correlation <- NA
+            }
+            
+            # Store the results
+            result_rows[[row_counter]] <- data.frame(
+              subject = sub,
+              first_region = first_roi,
+              second_region = second_roi,
+              elec1 = roi1_elec,
+              elec2 = roi2_elec,
+              trial = trial,
+              correlation = correlation,
+              stringsAsFactors = FALSE
+            )
+            row_counter <- row_counter + 1
+          }
+        }
+      }
+      
+      # Combine results into a data frame
+      if (length(result_rows) > 0) {
+        result_rows_df <- bind_rows(result_rows)
+      } else {
+        result_rows_df <- data.frame()
+      }
+      
+      return(result_rows_df)
+    }, error = function(e) {
+      # Handle any errors that occur within the tryCatch block
+      warning(paste("Error processing subject", sub, ":", e$message))
+      return(NULL)  # Return NULL so that bind_rows can handle it
+    })
+  }
+  
+  # Collect results for each region pair
+  results_list[[i]] <- results_sub
+}
+
+# Stop the cluster
+stopCluster(cl)
+
+# Combine all results into a single data frame
+results <- bind_rows(results_list)
+
+
+```
+
+
+```{r}
+
+## Bind to Turn Time
+results <- results %>%
+  mutate(pair_id = paste0(elec1, "_", elec2)) 
+
+pairs_turn_df <- left_join(results, turn_time_df, by = c("subject", "trial"))
+
+
+write_csv(pairs_turn_df, path(here(), "results", paste0(freq, "_correlations_newsubs.csv")))
+
+```
+
+
+
+

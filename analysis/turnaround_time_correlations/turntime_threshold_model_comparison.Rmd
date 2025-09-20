@@ -1,0 +1,224 @@
+---
+title: "Comparing Electrode Groups on Turnaround Effect"
+output: html_document
+date: "2025-07-03"
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 8,  # set default width of figures
+  fig.height = 5,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(magrittr)
+library(ggthemr)
+library(grid)
+library(gtable)
+library(gridExtra)
+library(wesanderson)
+library(ggsci)
+library(zoo)
+library(kableExtra)
+library(lme4)
+library(RColorBrewer)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(ggcorrplot)
+library(viridis)
+library(lmtest)
+library(gt)
+library(survminer)
+library(survival)
+library(effectsize)
+library(scales)
+library(JMbayes2)
+library(caret)
+library(rmarkdown)
+library(blme)
+library(brms)
+library(bayesplot)
+library(posterior)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", "clean_behavioral_data.R"))
+source(path(here(), "R", "create_distance_df.R"))
+source(path(here(), "R", "joint_modeling_functions.R"))
+source(path(here(), "R", "jm_visualization_functions.R"))
+source(path(here(), "R", "connectivity_prep_functions.R"))
+source(path(here(), "R", "bayesian_helpers.R"))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# # ## parallelization ##
+# nCores <- 8
+# registerDoParallel(nCores)
+
+
+```
+
+# Theta Thresholding ~ Turntime & Theta Synchrony
+
+This supplemental analysis tests for how restricting or expanding the theta coherence thresholds changes the effect of theta/hfa synchrony on turnaround times
+
+The synchrony ~ turnaround time analyses were rerun with different thresholding: no thresholding ('All Pairs'), 100ms of elevated theta coherence during approach, 500ms of elevated theta coherence, and 1000ms of elevated theta coherence.
+
+This scripts loads the results of the models and plots the slopes of the effect for each electrode group. 
+
+Inputs:
+* `./high_performance_cluster_batch_scripts/compute_alternate_brms_theta_models.R` 
+* `./high_performance_cluster_batch_scripts/compute_alternate_brms_hfa_models.R`
+* `./create_sig_theta_coherence_csv.Rmd`
+
+Output:
+* Supplemental Figure 8
+
+```{r load-data}
+
+## theta
+theta_all_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "theta_all_roi_all_elecs_slopes_summary.csv"))
+theta_orig_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "theta_all_roi_orig_elecs_slopes_summary.csv"))
+theta_50_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "theta_all_roi_50_elecs_slopes_summary.csv"))
+theta_100_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "theta_all_roi_100_elecs_slopes_summary.csv"))
+theta_10a_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "theta_all_roi_10a_elecs_slopes_summary.csv"))
+## hfa
+hfa_all_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "hfa_all_roi_all_elecs_slopes_summary.csv"))
+hfa_orig_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "hfa_all_roi_orig_elecs_slopes_summary.csv"))
+hfa_50_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "hfa_all_roi_50_elecs_slopes_summary.csv"))
+hfa_100_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "hfa_all_roi_100_elecs_slopes_summary.csv"))
+hfa_10a_slopes_summary_df <- read_csv(path(here(), "results", "turn_time_prediction", "hfa_all_roi_10a_elecs_slopes_summary.csv"))
+
+## bind
+all_slopes_summary_df <- bind_rows(
+  theta_all_slopes_summary_df %>% mutate(electrode_group = "all", freq = "theta"),
+  theta_orig_slopes_summary_df %>% mutate(electrode_group = "orig", freq = "theta"),
+  theta_50_slopes_summary_df %>% mutate(electrode_group = "50", freq = "theta"),
+  theta_100_slopes_summary_df %>% mutate(electrode_group = "100", freq = "theta"),
+  theta_10a_slopes_summary_df %>% mutate(electrode_group = "10a", freq = "theta"),
+  hfa_all_slopes_summary_df %>% mutate(electrode_group = "all", freq = "hfa"),
+  hfa_orig_slopes_summary_df %>% mutate(electrode_group = "orig", freq = "hfa"),
+  hfa_50_slopes_summary_df %>% mutate(electrode_group = "50", freq = "hfa"),
+  hfa_100_slopes_summary_df %>% mutate(electrode_group = "100", freq = "hfa"),
+  hfa_10a_slopes_summary_df %>% mutate(electrode_group = "10a", freq = "hfa")
+  ) %>%
+    mutate(Region_Pair = case_when(
+    freq == "theta" & Region_Pair == "amyg_cing" ~ "Amyg. ~ ACC *",
+    freq == "theta" & Region_Pair == "hc_amyg" ~ "HC ~ Amyg. *",
+    freq == "theta" & Region_Pair == "amyg_mfg" ~ "Amyg. ~ MFG",
+    freq == "theta" & Region_Pair == "ofc_amyg" ~ "OFC ~ Amyg. *",
+    freq == "theta" & Region_Pair == "ofc_cing" ~ "OFC ~ ACC *",
+    freq == "theta" & Region_Pair == "ofc_hc" ~ "OFC ~ HC *",
+    freq == "theta" & Region_Pair == "ofc_mfg" ~ "OFC ~ MFG *",
+    freq == "theta" & Region_Pair == "hc_cing" ~ "HC ~ ACC",
+    freq == "theta" & Region_Pair == "hc_mfg" ~ "HC ~ MFG",
+    freq == "theta" & Region_Pair == "mfg_cing" ~ "MFG ~ ACC *",
+    freq == "hfa" & Region_Pair == "amyg_cing" ~ "Amyg. ~ ACC",
+    freq == "hfa" & Region_Pair == "hc_amyg" ~ "HC ~ Amyg.",
+    freq == "hfa" & Region_Pair == "amyg_mfg" ~ "Amyg. ~ MFG",
+    freq == "hfa" & Region_Pair == "ofc_amyg" ~ "OFC ~ Amyg.",
+    freq == "hfa" & Region_Pair == "ofc_cing" ~ "OFC ~ ACC *",
+    freq == "hfa" & Region_Pair == "ofc_hc" ~ "OFC ~ HC",
+    freq == "hfa" & Region_Pair == "ofc_mfg" ~ "OFC ~ MFG *",
+    freq == "hfa" & Region_Pair == "hc_cing" ~ "HC ~ ACC",
+    freq == "hfa" & Region_Pair == "hc_mfg" ~ "HC ~ MFG *",
+    freq == "hfa" & Region_Pair == "mfg_cing" ~ "MFG ~ ACC",
+    
+  )) 
+```
+
+
+```{r, fig.width = 10, fig.height = 4}
+
+hfa_threshold_plot <- all_slopes_summary_df %>%
+  mutate(electrode_group = factor(electrode_group, levels = c("all", "orig", "10a", "50", "100"),
+                                  labels = c("All\nPairs", "100\nms", "100ms\n(App.)", "500\nms", "1000\nms"))) %>%
+  arrange(desc(electrode_group), Mean) %>%
+  mutate(Region_Pair = factor(Region_Pair, levels = unique(Region_Pair))) %>%
+  filter(freq == "hfa") %>%
+  ggplot(., aes(x = electrode_group, y = Mean), color = "#5CCDAD") +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = .7, size = .7) +
+  geom_point(size = 2, color = "#5CCDAD") +
+  theme(panel.background = element_rect(fill = "white"),
+        legend.position = "none",
+        axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+        axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 10),
+        strip.text = element_text(family = "Gill Sans", color = "#2D2327", size = 10),
+        legend.title = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        plot.title = element_text(family = "Gill Sans", color = "#2D2327", face = 'bold', size = 10)) +
+  facet_wrap(~Region_Pair, nrow = 2) +
+  xlab("Threshold Group") + ylab("Beta Coefficient (Size of the Effect)") +
+  ggtitle("Approach times correlate with HFA synchrony")
+
+hfa_threshold_plot
+```
+
+```{r, fig.width = 10, fig.height = 4}
+
+theta_threshold_plot <- all_slopes_summary_df %>%
+  mutate(electrode_group = factor(electrode_group, levels = c("all", "orig", "10a", "50", "100"),
+                                  labels = c("All\nPairs", "100\nms", "100ms\n(App.)", "500\nms", "1000\nms"))) %>%
+  arrange(desc(electrode_group), Mean) %>%
+  mutate(Region_Pair = factor(Region_Pair, levels = unique(Region_Pair))) %>%
+  filter(freq == "theta") %>%
+  ggplot(., aes(x = electrode_group, y = Mean)) +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = .5, size = .7, color = "#3D4F94") +
+  geom_point(size = 2, color = "#3D4F94") +
+  theme(panel.background = element_rect(fill = "white"),
+        legend.position = "none",
+        axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 9),
+        axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 10),
+        strip.text = element_text(family = "Gill Sans", color = "#2D2327", size = 10),
+        legend.title = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        plot.title = element_text(family = "Gill Sans", color = "#2D2327", face = 'bold', size = 10)) +
+  facet_wrap(~Region_Pair, nrow = 2) +
+  xlab("Threshold Group") + ylab("Beta Coefficient (Size of the Effect)") +
+  ggtitle("Approach times correlate with theta synchrony")
+
+theta_threshold_plot
+```
+
+```{r}
+
+ggsave(path(here(), "figures", "correl_turn_predictions", "theta_threshold_plot.png"),
+       theta_threshold_plot, width = 10, height = 4, dpi = 300)
+
+ggsave(path(here(), "figures", "correl_turn_predictions", "hfa_threshold_plot.png"),
+       hfa_threshold_plot, width = 10, height = 4, dpi = 300)
+
+
+```

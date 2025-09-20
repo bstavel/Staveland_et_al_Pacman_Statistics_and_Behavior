@@ -1,0 +1,138 @@
+---
+title: "Granger Plots"
+output: html_document
+date: "2025-02-18"
+---
+```{r setup, include=FALSE}
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(lmerTest)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(lmtest)
+library(scales)
+library(ggthemr)
+library(RColorBrewer)
+library(broom.mixed)
+library(brms)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", 'create_distance_df.R'))
+source(path(here(), "R", 'clean_behavioral_data.R'))
+source(path(here(), "R", 'compile_ieeg_csv_files.R'))
+source(path(here(), "R", 'run_and_plot_lme_models.R'))
+source(path(here(), "R", 'separate_mfg_sfg.R'))
+
+## plotting helpers ##
+ggthemr("light")
+ghost_colors <- c("#E48DB7","#55BBC8", "#DE0D16")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+roi_colors <-  c("Amygdala" = "#DE4A4D", "Hippocampus" = "#FFA602", "OFC" =  "#88D1A3", "Ant. Cingulate"=  "#3D99BA", "Insula" =  "#876194", "MFG" = "#FB6087", "SFG" = "#FB9A99")
+
+```
+
+
+## Plots Granger Results
+
+This script takes the Granger values of the regions that were significant in both the Granger and Cross-Correlation Analysis and plots them
+
+Inputs
+* `all_subs_sig_roi_true_granger_dir_additional_perms.csv` which is created in  `Staveland_et_al_Pacman_Neural_Analyses/blob/main/connectivity/scripts/granger/compute_granger_pvalues_additional_perms.py`
+
+Outputs:
+* `figure4_granger_combined_plot.png` in `figures/granger/`
+
+
+```{r load-data}
+
+granger_df <- read_csv(path(here(), "results", "granger", "all_subs_sig_roi_true_granger_dir_additional_perms.csv"))
+
+table(granger_df$subject, granger_df$region)
+```
+
+
+```{r create-average-model}
+
+granger_sig_df <- granger_df %>%
+  mutate(pair_id = paste0(subject, "_", pair)) %>%
+  group_by(subject, pair) %>%
+  mutate(pval_fdr = p.adjust(pval, method = "fdr")) %>%
+  mutate(sig = pval_fdr < 0.05) %>%
+  mutate(sig_count = sum(sig)) %>%
+  ungroup() %>%
+  filter(sig_count >= 50) %>%
+  mutate(case = if_else(times <= 0, "Approach", "Avoid"))
+
+glimpse(granger_sig_df)
+
+```
+
+```{r, fig.width = 4, fig.height = 2.5}
+
+granger_approach_sig_df <- granger_sig_df %>%
+  filter(region %in% c("amyg_cing", "amyg_ofc", "mfg_cing", "ofc_mfg")) %>%
+  mutate(granger = if_else(region == "ofc_mfg", granger* -1, granger)) %>%
+  filter(case == "Approach") %>%
+  group_by(region, subject, pair_id) %>%
+  summarize(pair_granger = mean(granger), .groups = "drop") %>%
+  mutate(region = if_else(region == "amyg_cing", " Amyg. -> ACC Theta",
+                          if_else(region == "amyg_ofc", " Amyg. -> OFC Theta",
+                                  if_else(region == "mfg_cing", " MFG -> ACC Theta", " MFG -> OFC Theta"))))
+
+granger_sub_plot_df <- granger_approach_sig_df %>%
+  group_by(region, subject) %>%
+  summarize(sub_granger = mean(pair_granger), .groups = "drop") 
+
+
+
+granger_all_roi_plot <- granger_sub_plot_df %>%
+  ggplot(., aes(x = region, y = sub_granger, fill = region)) +
+  geom_hline(yintercept = 0, color = "#2D2327") +
+  geom_violin(data = granger_approach_sig_df, aes(x = region, y = pair_granger, fill = region), alpha = .7, color = "#2D2327") +
+  geom_boxplot(color = "#2D2327",  width = .5) +
+  geom_jitter(aes(x = region, y = sub_granger), color = "#2D2327", width = .2, size = 2, shape = 4) +
+  # geom_errorbar(aes(ymin = lower_sem, ymax = upper_sem), color = "#2D2327", width = .2) +
+    theme(panel.background = element_rect(fill = "white"),
+        legend.position = "none",
+        axis.text = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 7.5),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.title = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        strip.text = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        plot.title = element_text(family = "Gill Sans", color = "#2D2327", size = 8, hjust = 1),
+        plot.subtitle = element_text(family = "Gill Sans", color = "#2D2327", size = 7, margin = margin(b = 0)))  +
+  scale_fill_manual(values = c("#DE4A4D", "#DE4A4D", "#876194", "#876194")) +
+  labs(x = "", y = "Net Granger (a.u.)\n") +
+  facet_wrap(~region, scale = "free_x", nrow = 1) +
+  ylim(-.26, .26)
+
+ggsave(path(here(), "figures", "granger", "figure4_granger_combined_plot.png"), 
+       plot = granger_all_roi_plot, 
+       width = 4.5, height = 2.5, units = "in", dpi = 600)
+
+```
+

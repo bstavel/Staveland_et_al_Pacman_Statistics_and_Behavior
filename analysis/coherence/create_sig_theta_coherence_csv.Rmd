@@ -1,0 +1,533 @@
+---
+title: "Create Sig Theta Coherence CSV"
+output: html_document
+date: "2024-09-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't print the code chunk
+  warning = FALSE,  # don't print warnings
+  message = FALSE,  # don't print messages
+  fig.width = 8,  # set default width of figures
+  fig.height = 5,  # set default height of figures
+  fig.align = "center",  # always align figure in center
+  fig.pos = "H",  # always plot figure at the exact location of the code chunk
+  cache = FALSE)  # cache results
+
+## libraries ##
+library(tidyverse)
+library(ggplot2)
+library(grid)
+library(gtable)
+library(lme4)
+library(doParallel)
+library(parallel)
+library(foreach)
+library(here)
+library(fs)
+library(gt)
+library(effectsize)
+library(scales)
+library(JMbayes2)
+library(rmarkdown)
+
+## hand written functions ##
+source(path(here(), "R", 'mutate_cond.R'))
+source(path(here(), "R", "clean_behavioral_data.R"))
+source(path(here(), "R", "create_distance_df.R"))
+source(path(here(), "R", "joint_modeling_functions.R"))
+source(path(here(), "R", "jm_visualization_functions.R"))
+source(path(here(), "R", "connectivity_prep_functions.R"))
+
+## plotting helpers ##
+ggthemr("light")
+getPalette = colorRampPalette(brewer.pal(17, "Set1"))
+
+c25 <- c(
+  "dodgerblue2", "#E31A1C", # red
+  "green4",
+  "#6A3D9A", # purple
+  "#FF7F00", # orange
+  "black", "gold1",
+  "skyblue2", "#FB9A99", # lt pink
+  "palegreen2",
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70", "khaki2",
+  "maroon", "orchid1", "deeppink1", "blue1", "steelblue4",
+  "darkturquoise", "green1", "yellow4", "yellow3",
+  "darkorange4", "brown"
+)
+
+# # ## parallelization ##
+# nCores <- 8
+# registerDoParallel(nCores)
+
+
+```
+
+## Significant Theta Coherence Electrode Pairs
+
+The main point of this script is to create a csv with the significant electrode pairs based on the theta coherence analysis. Additionally, it creates some supporitng figures and tables about the number of significant electrodes.
+
+It requires:
+* `combined_ghost_connectivity_newsubs.csv` which is an output of `Staveland_et_al_Pacman_Neural_Analyses/blob/main/connectivity/scripts/turnaround_coherence/concatenate_connectivity_results.ipynb` (Different repo)
+* `mni_coordinates_all_subs_with_detailed_regions.csv` which is an output of `Staveland_et_al_Pacman_Neural_Analyses/blob/main/across_subject_analyses/scripts/anatomy/plot_all_elecs_on_brain.ipynb` (Different repo)
+
+It produces: 
+* `sig_theta_pairs.csv` in the `results/` folder
+* `sig_theta_threshold_pairs.csv` in the `results/` folder (alternate thresholds used in the supplementary analyses)
+* `figure3_theta_coherence_across_metrics.png` in the `figures/connectivity` folder
+* Supplemental Table 2
+
+
+```{r load-data}
+## load data ##
+conn_df <- read_csv(path(here(), "results", "combined_connectivity_newsubs.csv"))
+
+
+```
+
+
+```{r add-sfg-mfg-info}
+
+regions_df <- read_csv(path(here(), "munge", "mni_coordinates_all_subs_with_detailed_regions.csv"))
+
+## add mfg/sfg information
+mfg_df <- regions_df %>%
+  filter(region == "mfg") %>%
+  mutate(elec_id = paste0(subject, "_", Electrode))
+
+sfg_df <- regions_df %>%
+  filter(region == "sfg") %>%
+  mutate(elec_id = paste0(subject, "_", Electrode))
+
+conn_detailed_df <- conn_df %>%
+  mutate(
+    first_pair = gsub("_to_.*", "", pairs),
+    second_pair = gsub(".*_to_", "", pairs),
+    first_pair_1 = gsub("-.*", "", first_pair),
+    first_pair_2 = gsub(".*-", "", first_pair),
+    second_pair_1 = gsub("-.*", "", second_pair),
+    second_pair_2 = gsub(".*-", "", second_pair),
+  ) %>%
+  mutate(
+    detailed_first_region = if_else(
+        first_region == "dlpfc" &
+        paste0(subject, "_", first_pair_1) %in% mfg_df$elec_id |
+        paste0(subject, "_", first_pair_2) %in%  mfg_df$elec_id,
+      "mfg",
+      if_else(
+          first_region == "dlpfc" &
+          paste0(subject, "_", first_pair_1) %in% sfg_df$elec_id |
+          paste0(subject, "_", first_pair_2) %in%  sfg_df$elec_id,
+      "sfg",
+      first_region
+      )),
+    detailed_second_region = if_else(
+          second_region == "dlpfc" &
+          paste0(subject, "_", second_pair_1) %in% mfg_df$elec_id |
+          paste0(subject, "_", second_pair_2) %in%  mfg_df$elec_id,
+      "mfg",
+      if_else(
+          second_region == "dlpfc" &
+          paste0(subject, "_", second_pair_1) %in% sfg_df$elec_id |
+          paste0(subject, "_", second_pair_2) %in%  sfg_df$elec_id,
+      "sfg",
+      second_region
+      )
+     )
+    )
+
+
+## Check that everything worked correctly
+table(conn_detailed_df$detailed_first_region)
+table(conn_detailed_df$detailed_second_region)
+
+# final rename
+conn_detailed_df <- conn_detailed_df %>%
+  mutate(first_region = detailed_first_region, 
+         second_region = detailed_second_region)
+
+table(conn_detailed_df$subject)
+```
+
+
+```{r create-sig-elecs}
+
+## FDR correct/make symmetric
+conn_clean_df <- prep_detailed_conn_allsubs_plot_df(conn_detailed_df) # makes the df symmetric, so we have all instances of ofc_amyg and amyg_ofc
+
+sig_electrode_df <- conn_clean_df %>%
+  mutate(time = round(time, 2)) %>%
+  filter(time >= -1.5 & time <= 1.5) %>%
+  group_by(subject, pairs, roi_pair, metric) %>%
+  mutate(sig_time_bins = sum(sig)) %>%
+  ungroup %>%
+  select(subject, pairs, roi_pair, metric, sig_time_bins) %>%
+  distinct() 
+
+```
+
+
+### Create Different Threshold Lists
+
+```{r}
+
+# orig, 100ms
+sg_orig_df <- sig_electrode_df %>%
+  filter(metric == "Imaginary Coherence") %>%
+  filter(sig_time_bins > 10) %>% 
+  mutate(threshold = "10")
+
+# 500ms
+sg_50_df <- sig_electrode_df %>%
+  filter(metric == "Imaginary Coherence") %>%
+  filter(sig_time_bins > 50) %>% 
+  mutate(threshold = "50")
+
+# 1000ms
+sg_100_df <- sig_electrode_df %>%
+  filter(metric == "Imaginary Coherence") %>%
+  filter(sig_time_bins > 100) %>% 
+  mutate(threshold = "100")
+
+# 100ms, approach only
+sg_10app_df <- conn_clean_df %>%
+  mutate(time = round(time, 2)) %>%
+  filter(time >= -1.5 & time <= 0) %>%
+  group_by(subject, pairs, roi_pair, metric) %>%
+  mutate(sig_time_bins = sum(sig)) %>%
+  ungroup %>%
+  select(subject, pairs, roi_pair, metric, sig_time_bins) %>%
+  distinct()  %>%
+  filter(metric == "Imaginary Coherence") %>%
+  filter(sig_time_bins > 10) %>% 
+  mutate(threshold = "10a")
+
+# bind
+sig_thresh_df <- bind_rows(sg_orig_df, sg_50_df, sg_100_df, sg_10app_df)
+
+
+# write to csv #
+write_csv(sig_thresh_df, path(here(), "results", "sig_theta_threshold_pairs.csv"))
+```
+
+
+### Original Threshold, used in biorxiv
+
+```{r save, eval = F}
+
+# original calculation
+sg_df <- conn_clean_df %>%
+  filter(time >= -1.5 & time <= 1.5) %>%
+  group_by(subject, pairs, roi_pair, metric) %>%
+  mutate(sig_time_bins = sum(sig)) %>%
+  ungroup %>%
+  filter(sig_time_bins > 10) %>%
+  select(subject, pairs, roi_pair, metric) %>%
+  distinct() 
+
+# write to csv #
+write_csv(sg_df, path(here(), "results", "sig_theta_pairs.csv"))
+
+```
+
+
+
+
+### Create Figures for Significant Pairs by region, metric
+
+```{r percentages-overall, fig.width = 3.5, fig.height = 2.5}
+
+## get percentages of significant pairs
+ggthemr("flat")
+conn_clean_df <- conn_clean_df %>%
+  filter(time >= -1.5 & time <= 1.5) %>%
+  group_by(subject, pairs, roi_pair, metric) %>%
+  mutate(sig_time_bins = sum(sig)) %>%
+  ungroup %>%
+  mutate(sig_pair = if_else(sig_time_bins > 10, "sig", "ns")) 
+
+conn_summary_df <- conn_clean_df %>%
+  mutate(metric = if_else(metric == "Pairwise Phase Consistency", "Pairwise Phase\nConsistency", metric)) %>%
+  mutate(regions = paste(detailed_first_region, detailed_second_region, sep = "_")) %>%
+  filter(!grepl("insula", regions)) %>%
+  filter(!grepl("sfg", regions)) %>%
+  select(subject, pairs, detailed_first_region, detailed_second_region, first_pair, metric, sig_pair) %>%
+  distinct() %>%
+  group_by(subject, metric, sig_pair, first_pair) %>%
+  summarize(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) 
+
+conn_roi_summary_df <- conn_clean_df %>%
+  mutate(metric = if_else(metric == "Pairwise Phase Consistency", "Pairwise Phase\nConsistency", metric)) %>%
+  mutate(regions = paste(detailed_first_region, detailed_second_region, sep = "_")) %>%
+  filter(!grepl("insula", regions)) %>%
+  filter(!grepl("sfg", regions)) %>%
+  select(subject, pairs, detailed_first_region, detailed_second_region, first_pair, metric, sig_pair) %>%
+  distinct() %>%
+  group_by(subject, metric, detailed_first_region, detailed_second_region, sig_pair) %>%
+  summarize(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) %>%
+  select(subject, metric, detailed_first_region, detailed_second_region, total, sig_percent, ns_percent) %>%
+  distinct()
+
+conn_avg_summary_df <- conn_summary_df %>%
+  group_by(subject, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent)) 
+
+           
+conn_summary_plot <- conn_summary_df %>%
+  ggplot(., aes(x = metric, y = sig_percent, fill = metric)) +
+  geom_boxplot( width = .75, alpha = .7) +
+  geom_jitter(data = conn_avg_summary_df, aes(y = mean_sig, shape = "Within Patient\nAverages"), width = .25, color = "black") +
+  theme(panel.background = element_rect(fill = "white"), 
+        element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        axis.title = element_text(family = "Gill Sans", color = "#2D2327", size = 8.5),
+        legend.text  = element_text(family = "Gill Sans", color = "#2D2327", size = 7),
+        plot.title = element_text(family = "Gill Sans", color = "#2D2327", face = 'bold', size = 9, , margin = margin(b = 5)),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        legend.position = "right",
+      legend.justification = c(1, 1))  + 
+  scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1), expand = c(0,0)) +
+  scale_shape_manual(values = c("Within Patient\nAverages" = 25)) +
+  guides(fill = guide_legend(nrow = 3, order = 1)) +
+  scale_fill_manual(values = c("#F89078", "#EA4E87", "#A2319F")) +
+  labs(y = "Average perecent of coherent electrodes", x = "Connectivity metric", fill = "", shape = "") +
+  ggtitle("Theta coherence between all regions")
+
+conn_summary_plot
+ggsave(path(here(), "figures", "connectivity", paste0("figure3_theta_coherence_across_metrics.png")), 
+       plot = conn_summary_plot, 
+       width = 3.5, height = 2.5, units = "in", dpi = 300)
+
+```
+
+
+
+```{r percentages, fig.width = 20, fig.height = 5}
+
+## get percentages of significant pairs
+ggthemr("flat")
+conn_clean_df <- conn_clean_df %>%
+  filter(time >= -1.5 & time <= 1.5) %>%
+  group_by(subject, pairs, roi_pair, metric) %>%
+  mutate(sig_time_bins = sum(sig)) %>%
+  ungroup %>%
+  mutate(sig_pair = if_else(sig_time_bins > 10, "sig", "ns")) 
+
+conn_summary_df <- conn_clean_df %>%
+  mutate(regions = paste(detailed_first_region, detailed_second_region, sep = "_")) %>%
+  filter(!grepl("insula", regions)) %>%
+  filter(!grepl("sfg", regions)) %>%
+  mutate(
+    region_pair = case_when(
+      grepl("ofc", regions) & grepl("hc", regions) ~ "OFC ~ HC",
+      grepl("ofc", regions) & grepl("amyg", regions) ~ "OFC ~ Amyg.",
+      grepl("ofc", regions) & grepl("mfg", regions) ~ "OFC ~ MFG",
+      grepl("ofc", regions) & grepl("cing", regions) ~ "OFC ~ ACC",
+      grepl("hc", regions) & grepl("amyg", regions) ~ "HC ~ Amyg.",
+      grepl("hc", regions) & grepl("mfg", regions) ~ "HC ~ MFG",
+      grepl("hc", regions) & grepl("cing", regions) ~ "HC ~ ACC",
+      grepl("amyg", regions) & grepl("mfg", regions) ~ "Amyg. ~ MFG",
+      grepl("amyg", regions) & grepl("cing", regions) ~ "Amyg. ~ ACC",
+      grepl("mfg", regions) & grepl("cing", regions) ~ "MFG ~ ACC"
+    )) %>%
+  select(subject, pairs, region_pair, metric, sig_pair) %>%
+  distinct() %>%
+  group_by(subject, region_pair, metric, sig_pair) %>%
+  summarize(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) 
+
+conn_avg_summary_df <- conn_summary_df %>%
+  group_by(region_pair, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent))
+
+           
+conn_summary_roi_plot <- conn_summary_df %>%
+  filter(!(is.na(region_pair))) %>%
+  group_by(region_pair, metric) %>%
+  mutate(mean_sig = mean(sig_percent)) %>%
+  ggplot(., aes(x = fct_reorder(region_pair, mean_sig), y = sig_percent, fill = metric)) +
+  geom_violin(alpha = .7,  position = position_dodge(width = .75)) +
+  geom_boxplot(position = position_dodge(width = .75), width = .25, alpha = .7) +
+  geom_point(position = position_dodge(width = .75), shape = 21, color = "black") +
+  theme(panel.background = element_rect(fill = "white"), legend.position = "top") +
+  labs(y = "Percentage of Significant Electrodes", x = "Region Pair", fill = "Connectivity Metric") +
+  ggtitle("Theta coherence across region pairs")
+
+conn_count_roi_plot <- conn_summary_df %>%
+  filter(!(is.na(region_pair))) %>%
+  group_by(region_pair, metric) %>%
+  ggplot(., aes(x = fct_reorder(region_pair, sig), y = sig, fill = metric)) +
+  geom_violin(alpha = .7,  position = position_dodge(width = .75)) +
+  geom_boxplot(position = position_dodge(width = .75), width = .25, alpha = .7) +
+  geom_point(position = position_dodge(width = .75), shape = 21, color = "black") +
+  theme(panel.background = element_rect(fill = "white"), legend.position = "top") +
+  facet_wrap(~region_pair, scales = "free", nrow = 1) +
+  labs(y = "Count of Significant Electrodes", x = "Region Pair", fill = "Connectivity Metric") +
+  ggtitle("Theta coherence across region pairs")
+
+
+
+conn_total_roi_plot <- conn_summary_df %>%
+  filter(!(is.na(region_pair))) %>%
+  group_by(region_pair, metric) %>%
+  ggplot(., aes(x = fct_reorder(region_pair, total), y = total)) +
+  geom_boxplot(position = position_dodge(width = .75), width = .25, alpha = .7) +
+  geom_point(position = position_dodge(width = .75), shape = 21, color = "black") +
+  theme(panel.background = element_rect(fill = "white"), legend.position = "top") +
+  facet_wrap(~region_pair, scales = "free", nrow = 1) +
+  labs(y = "Count of Significant Electrodes", x = "Region Pair", fill = "Connectivity Metric") +
+  ggtitle("Theta coherence across region pairs")
+
+
+ggsave(path(here(), "figures", "connectivity", paste0("theta_coherence_across_metrics_by_region.png")), 
+       plot = conn_summary_roi_plot, 
+       width = 10, height = 3, units = "in", dpi = 300)
+
+
+ggsave(path(here(), "figures", "connectivity", paste0("theta_coherence_across_metrics_by_region_count.png")), 
+       plot = conn_count_roi_plot, 
+       width = 10, height = 3, units = "in", dpi = 300)
+
+```
+
+
+### Create Table for Significant Pairs by region, metric
+
+```{r}
+
+conn_avg_summary_df <- conn_clean_df %>%
+  mutate(regions = paste(detailed_first_region, detailed_second_region, sep = "_")) %>%
+  filter(!grepl("insula", regions)) %>%
+  filter(!grepl("sfg", regions)) %>%
+  select(subject, pairs, regions, metric, sig_pair) %>%
+  distinct() %>%
+  mutate(
+    hipp = if_else(grepl("hc", regions), "yes", "no"),
+    ofc = if_else(grepl("ofc", regions), "yes", "no"),
+    amyg = if_else(grepl("amyg", regions), "yes", "no"),
+    mfg = if_else(grepl("mfg", regions), "yes", "no"),
+    acc = if_else(grepl("cing", regions), "yes", "no")
+    )
+
+conn_avg_hc_df <- conn_avg_summary_df %>%
+  filter(hipp == "yes") %>%
+  mutate(Region = "Hippocampus") %>%
+  group_by(Region, subject, metric, sig_pair) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) %>%
+  group_by(Region, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent))
+
+conn_avg_amyg_df <- conn_avg_summary_df %>%
+  filter(amyg == "yes") %>%
+  mutate(Region = "Amygdala") %>%
+  group_by(Region, subject, metric, sig_pair) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) %>%
+  group_by(Region, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent))
+
+conn_avg_ofc_df <- conn_avg_summary_df %>%
+  filter(ofc == "yes") %>%
+  mutate(Region = "OFC") %>%
+  group_by(Region, subject, metric, sig_pair) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) %>%
+  group_by(Region, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent))
+
+
+conn_avg_acc_df <- conn_avg_summary_df %>%
+  filter(acc == "yes") %>%
+  mutate(Region = "ACC") %>%
+  group_by(Region, subject, metric, sig_pair) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) %>%
+  group_by(Region, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent))
+
+conn_avg_mfg_df <- conn_avg_summary_df %>%
+  filter(mfg == "yes") %>%
+  mutate(Region = "MFG") %>%
+  group_by(Region, subject, metric, sig_pair) %>%
+  summarise(n = n()) %>%
+  pivot_wider(names_from = sig_pair, values_from = n, values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total = sig + ns,
+         sig_percent = sig/total,
+         ns_percent = ns/total) %>%
+  group_by(Region, metric) %>%
+  summarize(mean_sig = mean(sig_percent), sd_sig = sd(sig_percent), min_sig = min(sig_percent), max_sig = max(sig_percent))
+
+# combine all the dataframes
+conn_avg_all_df <- rbind(conn_avg_hc_df, conn_avg_amyg_df, conn_avg_ofc_df, conn_avg_acc_df, conn_avg_mfg_df)
+
+# round the values
+conn_avg_all_df <- conn_avg_all_df %>%
+  mutate(Mean = paste0(100 * round(mean_sig, 2), "%"),
+         SD = paste0(100 * round(sd_sig, 2), "%"),
+         Min = paste0(100 * round(min_sig, 2), "%"),
+         Max = paste0(100 * round(max_sig, 2), "%")) %>%
+  rename(Metric = metric) %>%
+  select(Region, Metric, Mean, SD, Min, Max)
+
+# make a table
+conn_avg_table <- conn_avg_all_df %>%
+  gt(rowname_col = "Metric", groupname_col = "Region") %>%
+  tab_options(
+    table.font.names = "Gill Sans",
+    table.font.size = px(12),
+    data_row.padding = px(4)
+  ) %>%
+  tab_style(
+    style = cell_text(style = "oblique"), # Apply italics to the first column
+    locations = cells_row_groups()# Apply only to the first column
+  ) %>%
+  tab_style(
+    style = cell_text(indent = px(20)), # Apply italics to the first column
+    locations = cells_stub(rows = T)# Apply only to the first column
+  ) %>%
+  tab_header(title = md("**Mean Percentage of Sig. Elec Pairs**"))
+
+conn_avg_table
+
+gtsave(conn_avg_table, path(here(), "figures", "connectivity", "percentage_of_sig_electrodes.png"),
+       vwidth = 1200,
+       vheight =2400)
+
+```
+
