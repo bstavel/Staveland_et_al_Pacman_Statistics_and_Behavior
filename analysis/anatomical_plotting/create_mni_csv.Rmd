@@ -66,7 +66,12 @@ c25 <- c(
 
 ```
 
-## Load Washu Data 
+# Create MNI CSV
+
+This script pulls all of the MNI coordinates for each electrode from the various sources and compiles them into a single csv file.
+
+
+### Load Washu Data 
 
 There is a matlab script in the matlab_helpers folder which compiles the MNI coordinates from .mat files. Run that first and then load in the resulting csv.
 
@@ -123,6 +128,8 @@ washu_mni_data_clean <- washu_mni_data %>%
 
 ```
 
+## Load Loma Linda data
+
 ```{r load-loma-linda-data}
 
 sub_list <- c("LL10", "LL12", "LL13", "LL14", "LL17", "LL19")
@@ -157,6 +164,7 @@ ll_mni_clean <- ll_mni_clean %>%
 
 ```
 
+## Save 
 
 ```{r bind-and-save}
 
