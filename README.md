@@ -94,3 +94,6 @@ This code was created using R v4.1.2. All required packages are loaded at the be
 - **tidyverse**: For data manipulation and visualization.
 - **brms**: For Bayesian modeling.
 - **ggplot2**: For plotting.
+
+### Install time (for repo)
+Under 5 minutes, assuming main dependencies are already installed
