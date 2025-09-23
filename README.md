@@ -85,6 +85,9 @@ This folder holds the analyses of the correlation between turnaround time and th
 - `supp_table_turn_times.Rmd`: This script creates the supplementary table for the turnaround times.
 - `turntime_threshold_model_comparison.Rmd`: This script compares the syncrhony results across different thresholds.
 
+### Run Time
+For one patient with an average number of electrodes, statistical analysis, including the construction of null distributions, should be under two weeks.
+
 ## Installation
 
 ### Requirements
